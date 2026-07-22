@@ -1,73 +1,59 @@
-"""本地一次性工具：用 Playwright 登录 WorkBuddy 并把 cookies 写入 store/ 缓存。
+"""本地一次性工具：手动登录 WorkBuddy，导出 cookies 供存入 GitHub Secrets。
 
-适用场景：
-- WorkBuddy 登录需要验证码/设备绑定时，CI 无头浏览器无法自动通过。
-- 本地以「有界面」模式运行本脚本，手动完成验证码，脚本会自动保存登录态，
-  之后 GitHub Actions 上的日常签到即可直接复用缓存 cookies，无需再登录。
+WorkBuddy 用手机号+验证码 / 微信扫码登录，CI 无法自动登录，故需你本机手动登一次：
+  1) pip install -r requirements.txt && playwright install chromium
+  2) python scripts/capture_workbuddy_token.py
+  3) 按提示在弹出的浏览器中为 each 账号完成登录（收验证码 / 扫微信码）
+  4) 登录成功后回到终端按回车，脚本打印该账号的 cookies JSON
+  5) 将 JSON 整段复制进对应 GitHub Secrets（WB1_COOKIES / WB2_COOKIES）
 
-用法：
-  pip install -r requirements.txt
-  playwright install chromium
-  # 在 .env 中填好 WB1_*/WB2_* 后：
-  CAPTURE_HEADFUL=1 python scripts/capture_workbuddy_token.py
-（CAPTURE_HEADFUL=1 会以可见浏览器运行，便于手动过验证码；留空则无头运行）
+cookies 失效后（一般数天~数周）重复上述步骤更新 Secrets 即可。
 """
-import os
+import json
 import sys
 
 from common.config import Config
 from common.logger import setup_logger
-from common.store import TokenStore
 
 
 def main():
     logger = setup_logger("capture")
     cfg = Config.load("config.yaml", logger)
-    store = TokenStore("store/tokens.json")
-
     wb_sites = [s for s in cfg.sites() if s.type == "workbuddy"]
     if not wb_sites:
-        logger.error("config.yaml 中未启用 workbuddy 站点")
+        logger.error("config.yaml 未启用 workbuddy 站点")
         sys.exit(1)
 
     from playwright.sync_api import sync_playwright
 
-    headful = bool(os.environ.get("CAPTURE_HEADFUL"))
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not headful)
-        ctx = browser.new_context()
+        browser = p.chromium.launch(headful=True)
         for site in wb_sites:
-            raw = site.raw
             base = site.base_url.rstrip("/")
-            login_cfg = raw.get("login", {})
-            user_sel = login_cfg.get("user_selector", "input[type=text]")
-            pass_sel = login_cfg.get("pass_selector", "input[type=password]")
-            submit_sel = login_cfg.get("submit_selector", "button[type=submit]")
-            page = ctx.new_page()
             for account in site.accounts:
+                ctx = browser.new_context()
+                page = ctx.new_page()
                 try:
-                    logger.info(f"登录 WorkBuddy/{account.name}")
+                    logger.info(f"打开 WorkBuddy 登录页: {base}")
                     page.goto(base, wait_until="domcontentloaded", timeout=60000)
-                    try:
-                        page.wait_for_selector(user_sel, timeout=8000)
-                        page.fill(user_sel, account.user)
-                        page.fill(pass_sel, account.password)
-                        page.click(submit_sel)
-                    except Exception:
-                        logger.info("未检测到登录框，可能已登录")
-                    if headful:
-                        # 有界面模式下等待用户手动通过验证码/二次验证
-                        logger.info("请在浏览器中完成验证码，等待 60 秒后自动保存...")
-                        page.wait_for_timeout(60000)
-                    else:
-                        page.wait_for_timeout(8000)
+                    input(
+                        f"\n[账号 {account.name}] 请在浏览器中完成登录"
+                        f"（手机验证码 / 微信扫码），登录成功后回到此处按回车继续..."
+                    )
                     cookies = ctx.cookies()
-                    store.save(site.key, account.name, {"cookies": cookies, "expires_at": None})
-                    logger.info(f"WorkBuddy/{account.name} cookies 已保存")
+                    secret_name = account.cookies_env or f"{account.name.upper()}_COOKIES"
+                    print(
+                        f"\n===== 账号 [{account.name}] 的 cookies "
+                        f"（请整段复制到 GitHub Secrets: {secret_name}）====="
+                    )
+                    print(json.dumps(cookies, ensure_ascii=False))
+                    print("=" * 60 + "\n")
                 except Exception as e:
-                    logger.warning(f"WorkBuddy/{account.name} 抓取失败: {e}")
-            browser.close()
-    logger.info("完成。已将 cookies 写入 store/，可推送到仓库供 Actions 复用。")
+                    logger.warning(f"账号 {account.name} 抓取失败: {e}")
+                finally:
+                    ctx.close()
+        browser.close()
+    logger.info("完成。请将上面的 cookies JSON 分别填入对应 Secrets。")
 
 
 if __name__ == "__main__":

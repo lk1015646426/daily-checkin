@@ -1,4 +1,9 @@
-"""配置加载：读取 config.yaml，并从环境变量解析账号密码等敏感信息。"""
+"""配置加载：读取 config.yaml，并从环境变量解析登录凭证。
+
+凭证支持两类：
+- 账号密码类（如 acy7）：user_env + pass_env
+- 登录态类（如 WorkBuddy 验证码/扫码）：cookies_env（整段 cookies JSON）
+"""
 import os
 from dataclasses import dataclass, field
 import yaml
@@ -7,8 +12,9 @@ import yaml
 @dataclass
 class Account:
     name: str
-    user: str
-    password: str
+    user: str = None
+    password: str = None
+    cookies_env: str = None
 
 
 @dataclass
@@ -39,23 +45,38 @@ class Config:
         return self.data.get("retry", {})
 
     def sites(self):
-        """解析出启用的站点与账号列表（账号密码从环境变量读取）。"""
+        """解析站点与账号。登录凭证来自环境变量：
+        - 账号密码类（如 acy7）：user_env + pass_env
+        - 登录态类（如 WorkBuddy 验证码/扫码）：cookies_env（整段 cookies JSON）
+        任一满足即视为可用账号。"""
         out = []
         for key, sc in (self.data.get("sites") or {}).items():
             if not sc.get("enabled", True):
                 continue
             accounts = []
             for a in sc.get("accounts", []) or []:
-                user = os.environ.get(a["user_env"])
-                pwd = os.environ.get(a["pass_env"])
-                if not user or not pwd:
+                name = a.get("name") or a.get("user_env") or a.get("cookies_env") or key
+                user_env = a.get("user_env")
+                pass_env = a.get("pass_env")
+                cookies_env = a.get("cookies_env")
+                user = os.environ.get(user_env) if user_env else None
+                pwd = os.environ.get(pass_env) if pass_env else None
+                cookies = os.environ.get(cookies_env) if cookies_env else None
+                has_pwd = bool(user and pwd)
+                has_cookies = bool(cookies)
+                if not has_pwd and not has_cookies:
                     self.logger.warning(
-                        f"站点 {key} 账号 {a.get('name', a['user_env'])} 缺少环境变量 "
-                        f"{a['user_env']}/{a['pass_env']}，已跳过"
+                        f"站点 {key} 账号 {name} 缺少登录凭证 "
+                        f"(需 {user_env}/{pass_env} 或 {cookies_env})，已跳过"
                     )
                     continue
                 accounts.append(
-                    Account(name=a.get("name", a["user_env"]), user=user, password=pwd)
+                    Account(
+                        name=name,
+                        user=user,
+                        password=pwd,
+                        cookies_env=cookies_env,
+                    )
                 )
             if not accounts:
                 self.logger.warning(f"站点 {key} 无可用账号，已跳过")

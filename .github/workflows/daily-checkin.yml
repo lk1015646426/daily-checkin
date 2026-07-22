@@ -40,10 +40,8 @@ jobs:
         env:
           ACY7_USER: ${{ secrets.ACY7_USER }}
           ACY7_PASS: ${{ secrets.ACY7_PASS }}
-          WB1_USER: ${{ secrets.WB1_USER }}
-          WB1_PASS: ${{ secrets.WB1_PASS }}
-          WB2_USER: ${{ secrets.WB2_USER }}
-          WB2_PASS: ${{ secrets.WB2_PASS }}
+          WB1_COOKIES: ${{ secrets.WB1_COOKIES }}
+          WB2_COOKIES: ${{ secrets.WB2_COOKIES }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
