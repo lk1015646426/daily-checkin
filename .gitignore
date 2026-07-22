@@ -1,0 +1,15 @@
+# 密钥与敏感缓存
+.env
+store/
+.cache/
+
+# 运行日志
+logs/*.log
+
+# Python
+__pycache__/
+*.pyc
+.playwright/
+
+# CodeBuddy 本地工作区数据
+.codebuddy/

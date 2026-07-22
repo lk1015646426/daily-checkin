@@ -1,0 +1,47 @@
+# 通知配置：channel = telegram | serverchan | none
+notify:
+  channel: telegram
+  telegram:
+    token_env: TG_TOKEN
+    chat_id_env: TG_CHAT_ID
+  serverchan:
+    key_env: SERVERCHAN_KEY
+
+# 请求重试
+retry:
+  attempts: 3
+  backoff_seconds: 2
+
+sites:
+  acy7:
+    enabled: true
+    type: acy7
+    base_url: https://acy7.com
+    accounts:
+      - name: main
+        user_env: ACY7_USER
+        pass_env: ACY7_PASS
+
+  workbuddy:
+    enabled: true
+    type: workbuddy
+    # WorkBuddy 签到入口（网页端）。请确认你的签到实际所在的网页地址。
+    # 若只能在桌面客户端签到，请将此处填写为可网页访问的地址，或仅在本地运行本账号。
+    base_url: https://clients.workbuddy.app
+    # 登录表单选择器（按实际页面调整）
+    login:
+      user_selector: "input[type=text], input[name=username], input[placeholder*=账号], input[autocomplete=username]"
+      pass_selector: "input[type=password], input[name=password]"
+      submit_selector: "button[type=submit], button:has-text('登录'), button:has-text('Sign')"
+    # 签到按钮选择器（来自社区 Playwright 方案）
+    checkin:
+      menu_selector: ".user-menu"
+      button_selector: ".daily-checkin-banner-action"
+      button_text: "立即领取"
+    accounts:
+      - name: acc1
+        user_env: WB1_USER
+        pass_env: WB1_PASS
+      - name: acc2
+        user_env: WB2_USER
+        pass_env: WB2_PASS

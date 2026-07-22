@@ -1,0 +1,57 @@
+name: Daily Checkin
+
+on:
+  schedule:
+    # 每天 01:05 UTC = 北京时间 09:05
+    - cron: "5 1 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore token cache
+        uses: actions/cache@v4
+        with:
+          path: store
+          key: signin-token-cache
+          restore-keys: |
+            signin-token-cache
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Run checkin
+        env:
+          ACY7_USER: ${{ secrets.ACY7_USER }}
+          ACY7_PASS: ${{ secrets.ACY7_PASS }}
+          WB1_USER: ${{ secrets.WB1_USER }}
+          WB1_PASS: ${{ secrets.WB1_PASS }}
+          WB2_USER: ${{ secrets.WB2_USER }}
+          WB2_PASS: ${{ secrets.WB2_PASS }}
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+        run: python main.py
+
+      - name: Save token cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: store
+          key: signin-token-cache
