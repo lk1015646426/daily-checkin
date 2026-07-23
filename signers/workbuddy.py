@@ -153,28 +153,30 @@ class WorkBuddySigner(BaseSigner):
         return {}
 
     def _get_total_credits(self):
-        """查询账号实际可用积分余额（所有有效资源包的剩余之和）。
+        """查询账号实际可用积分余额（有效裂变包的剩余之和）。
 
-        注意：API 返回的 CapacityRemain 是整数（会截断小数），
-        真实余额在 CapacityRemainPrecise 字符串字段中（如 "2.96000034"）。
-        必须用 Precise 字段才能拿到带小数的准确值。
+        资源包分两类：
+        - CapacityType=4：体验版（500积分试用包），不算真实余额
+        - CapacityType=1：裂变包（签到/活动获得），才是真实积分
+        只统计 CapacityType=1 且 Status=0（有效未过期）的裂变包。
+        用 CapacityRemainPrecise 字符串字段获取小数精度（如 2.96）。
         """
         s = self.session
         try:
             resp = s.post(RESOURCE_URL, json={}, headers=API_HEADERS, timeout=30)
             if resp.status_code == 200:
                 data = resp.json()
-                # 数据结构: data.Response.Data.Accounts[]
                 accounts = (
                     data.get("data", {})
                     .get("Response", {})
                     .get("Data", {})
                     .get("Accounts", [])
                 )
-                # 只统计 Status=0（有效未过期）的资源包剩余
-                # 优先用 CapacityRemainPrecise（字符串，含小数精度）
                 total = 0.0
                 for pkg in accounts:
+                    # 只统计裂变包（Type=1），排除体验版（Type=4）
+                    if pkg.get("CapacityType") != 1:
+                        continue
                     if pkg.get("Status") != 0:
                         continue
                     precise = pkg.get("CapacityRemainPrecise")
