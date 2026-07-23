@@ -25,23 +25,17 @@ sites:
   workbuddy:
     enabled: true
     type: workbuddy
-    # WorkBuddy 即 CodeBuddy（腾讯云 AI 代码助手），网页登录/应用入口
+    # WorkBuddy 即 CodeBuddy（腾讯云 AI 代码助手）
+    # 签到 API 直接调用 copilot.tencent.com，需从桌面客户端提取 access token
     base_url: https://www.codebuddy.cn
-    # 登录表单选择器（按实际页面调整）
-    login:
-      user_selector: "input[type=text], input[name=username], input[placeholder*=账号], input[autocomplete=username]"
-      pass_selector: "input[type=password], input[name=password]"
-      submit_selector: "button[type=submit], button:has-text('登录'), button:has-text('Sign')"
-    # 签到按钮选择器（来自社区 Playwright 方案）
-    checkin:
-      menu_selector: ".user-menu"
-      button_selector: ".daily-checkin-banner-action"
-      button_text: "立即领取"
     accounts:
       # WorkBuddy 用手机号+验证码/微信扫码登录，CI 无法自动登录。
-      # 请本机运行 scripts/capture_workbuddy_token.py 取登录态 cookies，
-      # 将输出的 JSON 整段填入对应 Secrets。
+      # 需从 WorkBuddy 桌面客户端提取 access token：
+      #   客户端登录后，token 存于
+      #   %LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info
+      #   取其中 auth.accessToken 的值，填入对应 Secrets。
+      # token 有效期约 1 年，过期需重新登录客户端提取。
       - name: acc1
-        cookies_env: WB1_COOKIES
+        token_env: WB1_TOKEN
       - name: acc2
-        cookies_env: WB2_COOKIES
+        token_env: WB2_TOKEN
