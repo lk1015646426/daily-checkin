@@ -44,11 +44,15 @@ class Config:
     def get_retry(self):
         return self.data.get("retry", {})
 
-    def sites(self):
+    def sites(self, require_credentials=True):
         """解析站点与账号。登录凭证来自环境变量：
         - 账号密码类（如 acy7）：user_env + pass_env
         - 登录态类（如 WorkBuddy 验证码/扫码）：cookies_env（整段 cookies JSON）
-        任一满足即视为可用账号。"""
+        任一满足即视为可用账号。
+
+        require_credentials=False 时不做凭证过滤（用于 capture 工具：此时
+        账号本就还没有 cookies，需要先手动登录抓取）。
+        """
         out = []
         for key, sc in (self.data.get("sites") or {}).items():
             if not sc.get("enabled", True):
@@ -64,7 +68,7 @@ class Config:
                 cookies = os.environ.get(cookies_env) if cookies_env else None
                 has_pwd = bool(user and pwd)
                 has_cookies = bool(cookies)
-                if not has_pwd and not has_cookies:
+                if require_credentials and not has_pwd and not has_cookies:
                     self.logger.warning(
                         f"站点 {key} 账号 {name} 缺少登录凭证 "
                         f"(需 {user_env}/{pass_env} 或 {cookies_env})，已跳过"

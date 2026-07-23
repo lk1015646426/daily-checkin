@@ -2,9 +2,11 @@
 .env
 store/
 .cache/
+pw_zips/
 
 # 运行日志
 logs/*.log
+debug.log
 
 # Python
 __pycache__/
@@ -13,3 +15,4 @@ __pycache__/
 
 # CodeBuddy 本地工作区数据
 .codebuddy/
+.workbuddy/

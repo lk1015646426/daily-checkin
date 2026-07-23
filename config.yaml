@@ -25,9 +25,8 @@ sites:
   workbuddy:
     enabled: true
     type: workbuddy
-    # WorkBuddy 签到入口（网页端）。请确认你的签到实际所在的网页地址。
-    # 若只能在桌面客户端签到，请将此处填写为可网页访问的地址，或仅在本地运行本账号。
-    base_url: https://clients.workbuddy.app
+    # WorkBuddy 即 CodeBuddy（腾讯云 AI 代码助手），网页登录/应用入口
+    base_url: https://www.codebuddy.cn
     # 登录表单选择器（按实际页面调整）
     login:
       user_selector: "input[type=text], input[name=username], input[placeholder*=账号], input[autocomplete=username]"

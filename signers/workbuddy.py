@@ -33,10 +33,18 @@ class WorkBuddySigner(BaseSigner):
 
         result = {"ok": False, "points": 0, "msg": ""}
 
-        # 读取本账号的登录态 cookies（来自 Secrets）
+        # 读取本账号的登录态 cookies：优先本地文件（capture 脚本自动保存），
+        # 其次环境变量（CI/Secrets）
         cookies_env = self.account.cookies_env
         cookies = None
-        if cookies_env:
+        cookie_file = os.path.join("store", f"wb_cookies_{self.account.name}.json")
+        if os.path.exists(cookie_file):
+            try:
+                with open(cookie_file, "r", encoding="utf-8") as f:
+                    cookies = json.load(f)
+            except Exception as e:
+                self.logger.warning(f"读取 {cookie_file} 失败: {e}")
+        if not cookies and cookies_env:
             raw_cookies = os.environ.get(cookies_env)
             if raw_cookies:
                 try:
