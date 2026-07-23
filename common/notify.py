@@ -48,13 +48,14 @@ class Notifier:
             status = "✅" if r.get("ok") else "❌"
             pts = r.get("points")
             unit = r.get("points_unit", "")
+            # 总额度/总积分显示在账号名后面
             if isinstance(pts, (int, float)) and pts:
                 if unit == "USD":
-                    pts_s = f" +${pts:.2f}"
+                    pts_s = f" [余额 ${pts:.2f}]"
                 elif unit == "积分":
-                    pts_s = f" {pts}{unit}"
+                    pts_s = f" [总计 {pts}{unit}]"
                 else:
-                    pts_s = f" +{pts}"
+                    pts_s = f" [{pts}]"
             else:
                 pts_s = ""
             cached = " (缓存复用)" if r.get("cached") else ""

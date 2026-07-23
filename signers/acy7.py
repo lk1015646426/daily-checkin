@@ -88,20 +88,43 @@ class Acy7Signer(BaseSigner):
 
         if resp.status_code == 200 and data.get("success"):
             d = data.get("data", {}) or {}
-            quota = d.get("quota_awarded") or 0
-            # New API 约定：500000 quota = $1
-            usd = round(quota / 500000, 4) if quota else 0
+            awarded = d.get("quota_awarded") or 0
+            # 查询账户总额度
+            total_quota = self._get_quota()
+            total_usd = round(total_quota / 500000, 2) if total_quota else 0
+            awarded_usd = round(awarded / 500000, 2) if awarded else 0
             return {
                 "ok": True,
-                "points": usd,
+                "points": total_usd,
                 "points_unit": "USD",
-                "msg": data.get("message", "签到成功"),
+                "msg": f"签到 +${awarded_usd:.2f}，总额度 ${total_usd:.2f}",
             }
 
         msg = data.get("message", "") or ""
         if "已签到" in msg or "already" in msg.lower() or "今日" in msg:
-            return {"ok": True, "points": 0, "points_unit": "USD", "msg": msg or "今日已签到"}
+            total_quota = self._get_quota()
+            total_usd = round(total_quota / 500000, 2) if total_quota else 0
+            return {
+                "ok": True,
+                "points": total_usd,
+                "points_unit": "USD",
+                "msg": f"今日已签到，总额度 ${total_usd:.2f}",
+            }
         return {"ok": False, "points": 0, "msg": msg or "签到失败"}
+
+    def _get_quota(self):
+        """查询账户当前总额度（quota）。"""
+        base = self.site.base_url.rstrip("/")
+        s = self.session
+        try:
+            r = s.get(f"{base}/api/user/self", timeout=30)
+            if r.status_code == 200:
+                j = r.json()
+                if j.get("success"):
+                    return (j.get("data") or {}).get("quota", 0) or 0
+        except Exception as e:
+            self.logger.warning(f"acy7/{self.account.name} 查询额度失败: {e}")
+        return 0
 
     def _cf_bypass(self):
         """Cloudflare 拦截时，用 Playwright 在浏览器内完成挑战并签到。"""
