@@ -19,6 +19,7 @@ import os
 from .base import AuthExpired, BaseSigner
 
 CHECKIN_URL = "https://copilot.tencent.com/v2/billing/meter/daily-checkin"
+STATUS_URL = "https://copilot.tencent.com/v2/billing/meter/checkin-status"
 
 # 签到 API 附加请求头（session 已有 UA / Accept）
 API_HEADERS = {
@@ -87,7 +88,7 @@ class WorkBuddySigner(BaseSigner):
             self.session.headers["Authorization"] = f"Bearer {token}"
 
     def checkin(self, auth):
-        """调用签到 API 执行每日签到。"""
+        """调用签到 API 执行每日签到，并查询当前积分。"""
         s = self.session
         try:
             resp = s.post(CHECKIN_URL, json={}, headers=API_HEADERS, timeout=30)
@@ -107,18 +108,44 @@ class WorkBuddySigner(BaseSigner):
         code = data.get("code")
         msg = data.get("msg", "")
 
+        # 签到后查询当前积分状态
+        status = self._get_status()
+
         # code=0 签到成功
         if code == 0:
             d = data.get("data", {}) or {}
-            credit = d.get("today_credit") or d.get("daily_credit") or 0
+            today_credit = d.get("today_credit") or (status.get("today_credit") if status else 0) or 0
+            total = status.get("total_credits", 0) if status else 0
+            streak = status.get("streak_days", 0) if status else 0
             return {
                 "ok": True,
-                "points": credit,
-                "msg": msg or "签到成功",
+                "points": total,
+                "points_unit": "积分",
+                "msg": f"签到成功 +{today_credit}积分，连续{streak}天，总计{total}积分",
             }
 
         # code=10001 "今天已签到，请明天再来" 也算成功
         if code == 10001 or "已签到" in msg or "already" in msg.lower():
-            return {"ok": True, "points": 0, "msg": msg or "今日已签到"}
+            total = status.get("total_credits", 0) if status else 0
+            streak = status.get("streak_days", 0) if status else 0
+            return {
+                "ok": True,
+                "points": total,
+                "points_unit": "积分",
+                "msg": f"今日已签到，连续{streak}天，总计{total}积分",
+            }
 
         return {"ok": False, "points": 0, "msg": msg or f"签到失败 (code={code})"}
+
+    def _get_status(self):
+        """查询签到状态（积分、连续天数等）。"""
+        s = self.session
+        try:
+            resp = s.post(STATUS_URL, json={}, headers=API_HEADERS, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("code") == 0:
+                    return data.get("data", {}) or {}
+        except Exception as e:
+            self.logger.warning(f"WorkBuddy/{self.account.name} 查询签到状态失败: {e}")
+        return {}

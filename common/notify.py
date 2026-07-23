@@ -47,7 +47,16 @@ class Notifier:
         for r in results:
             status = "✅" if r.get("ok") else "❌"
             pts = r.get("points")
-            pts_s = f" +{pts}" if isinstance(pts, (int, float)) and pts else ""
+            unit = r.get("points_unit", "")
+            if isinstance(pts, (int, float)) and pts:
+                if unit == "USD":
+                    pts_s = f" +${pts:.2f}"
+                elif unit == "积分":
+                    pts_s = f" {pts}{unit}"
+                else:
+                    pts_s = f" +{pts}"
+            else:
+                pts_s = ""
             cached = " (缓存复用)" if r.get("cached") else ""
             lines.append(f"{status} {r['site']}/{r['account']}{pts_s}: {r.get('msg', '')}{cached}")
         return "\n".join(lines)

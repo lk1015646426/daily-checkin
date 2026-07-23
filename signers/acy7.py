@@ -88,15 +88,19 @@ class Acy7Signer(BaseSigner):
 
         if resp.status_code == 200 and data.get("success"):
             d = data.get("data", {}) or {}
+            quota = d.get("quota_awarded") or 0
+            # New API 约定：500000 quota = $1
+            usd = round(quota / 500000, 4) if quota else 0
             return {
                 "ok": True,
-                "points": d.get("quota_awarded"),
+                "points": usd,
+                "points_unit": "USD",
                 "msg": data.get("message", "签到成功"),
             }
 
         msg = data.get("message", "") or ""
         if "已签到" in msg or "already" in msg.lower() or "今日" in msg:
-            return {"ok": True, "points": 0, "msg": msg or "今日已签到"}
+            return {"ok": True, "points": 0, "points_unit": "USD", "msg": msg or "今日已签到"}
         return {"ok": False, "points": 0, "msg": msg or "签到失败"}
 
     def _cf_bypass(self):
