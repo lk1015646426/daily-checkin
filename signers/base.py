@@ -46,6 +46,7 @@ class BaseSigner(ABC):
             "account": self.account.name,
             "ok": res.get("ok", False),
             "points": res.get("points"),
+            "points_unit": res.get("points_unit", ""),
             "msg": res.get("msg", ""),
             "cached": cached,
         }
