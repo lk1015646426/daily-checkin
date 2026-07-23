@@ -44,15 +44,21 @@ class Acy7Signer(BaseSigner):
             s.cookies.set("session", d)
             session_cookie = d
 
+        # user_id 优先取 login 响应的 data.id：/api/user/self 需要 new-api-user 头，
+        # 未设置时返回 401，而 login 响应本就带 id，直接用可避免"要头才能取 id、
+        # 要 id 才能设头"的死循环。仅当 login 无 id 时才回退调 /api/user/self。
         user_id = None
-        try:
-            r = s.get(f"{base}/api/user/self", timeout=30)
-            if r.status_code == 200:
-                j = r.json()
-                if j.get("success"):
-                    user_id = (j.get("data") or {}).get("id")
-        except Exception:
-            pass
+        if isinstance(d, dict):
+            user_id = d.get("id")
+        if not user_id:
+            try:
+                r = s.get(f"{base}/api/user/self", timeout=30)
+                if r.status_code == 200:
+                    j = r.json()
+                    if j.get("success"):
+                        user_id = (j.get("data") or {}).get("id")
+            except Exception:
+                pass
         if user_id:
             s.headers["new-api-user"] = str(user_id)
 
