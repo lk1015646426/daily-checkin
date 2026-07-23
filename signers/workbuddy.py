@@ -11,7 +11,7 @@ WorkBuddy（腾讯云 AI 代码助手）的每日签到只能在桌面客户端�
 
 签到 API：
 - 执行签到：POST https://copilot.tencent.com/v2/billing/meter/daily-checkin
-- 查签到状态：POST https://copilot.tencent.com/v2/billing/meter/checkin-status
+- 查签到活动状态：POST https://copilot.tencent.com/v2/billing/meter/checkin-activity-status
 """
 import json
 import os
@@ -19,7 +19,7 @@ import os
 from .base import AuthExpired, BaseSigner
 
 CHECKIN_URL = "https://copilot.tencent.com/v2/billing/meter/daily-checkin"
-STATUS_URL = "https://copilot.tencent.com/v2/billing/meter/checkin-status"
+STATUS_URL = "https://copilot.tencent.com/v2/billing/meter/checkin-activity-status"
 
 # 签到 API 附加请求头（session 已有 UA / Accept）
 API_HEADERS = {
