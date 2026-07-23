@@ -116,6 +116,8 @@ class WorkBuddySigner(BaseSigner):
 
         today_credit = activity.get("today_credit", 0) if activity else 0
         streak = activity.get("streak_days", 0) if activity else 0
+        # 积分格式化：整数不带小数点，非整数保留2位
+        credits_str = f"{total_credits:g}" if isinstance(total_credits, float) else str(total_credits)
 
         # code=0 签到成功
         if code == 0:
@@ -123,7 +125,7 @@ class WorkBuddySigner(BaseSigner):
                 "ok": True,
                 "points": total_credits,
                 "points_unit": "积分",
-                "msg": f"签到成功 +{today_credit}积分，连续{streak}天，账号余额{total_credits}积分",
+                "msg": f"签到成功 +{today_credit}积分，连续{streak}天，账号余额{credits_str}积分",
             }
 
         # code=10001 "今天已签到，请明天再来" 也算成功
@@ -132,7 +134,7 @@ class WorkBuddySigner(BaseSigner):
                 "ok": True,
                 "points": total_credits,
                 "points_unit": "积分",
-                "msg": f"今日已签到 +{today_credit}积分，连续{streak}天，账号余额{total_credits}积分",
+                "msg": f"今日已签到 +{today_credit}积分，连续{streak}天，账号余额{credits_str}积分",
             }
 
         return {"ok": False, "points": 0, "msg": msg or f"签到失败 (code={code})"}
@@ -151,7 +153,12 @@ class WorkBuddySigner(BaseSigner):
         return {}
 
     def _get_total_credits(self):
-        """查询账号实际可用积分余额（所有有效资源包的剩余之和）。"""
+        """查询账号实际可用积分余额（所有有效资源包的剩余之和）。
+
+        注意：API 返回的 CapacityRemain 是整数（会截断小数），
+        真实余额在 CapacityRemainPrecise 字符串字段中（如 "2.96000034"）。
+        必须用 Precise 字段才能拿到带小数的准确值。
+        """
         s = self.session
         try:
             resp = s.post(RESOURCE_URL, json={}, headers=API_HEADERS, timeout=30)
@@ -165,12 +172,20 @@ class WorkBuddySigner(BaseSigner):
                     .get("Accounts", [])
                 )
                 # 只统计 Status=0（有效未过期）的资源包剩余
-                total = sum(
-                    pkg.get("CapacityRemain", 0)
-                    for pkg in accounts
-                    if pkg.get("Status") == 0
-                )
-                return total
+                # 优先用 CapacityRemainPrecise（字符串，含小数精度）
+                total = 0.0
+                for pkg in accounts:
+                    if pkg.get("Status") != 0:
+                        continue
+                    precise = pkg.get("CapacityRemainPrecise")
+                    if precise:
+                        try:
+                            total += float(precise)
+                        except (ValueError, TypeError):
+                            total += pkg.get("CapacityRemain", 0)
+                    else:
+                        total += pkg.get("CapacityRemain", 0)
+                return round(total, 2)
         except Exception as e:
             self.logger.warning(f"WorkBuddy/{self.account.name} 查询资源余额失败: {e}")
         return 0

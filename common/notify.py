@@ -53,7 +53,9 @@ class Notifier:
                 if unit == "USD":
                     pts_s = f" [余额 ${pts:.2f}]"
                 elif unit == "积分":
-                    pts_s = f" [总计 {pts}{unit}]"
+                    # 整数不带小数点，非整数保留2位
+                    pts_str = f"{pts:g}" if isinstance(pts, float) else str(pts)
+                    pts_s = f" [余额 {pts_str}{unit}]"
                 else:
                     pts_s = f" [{pts}]"
             else:
