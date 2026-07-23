@@ -2,8 +2,8 @@ name: Daily Checkin
 
 on:
   schedule:
-    # 每天 01:05 UTC = 北京时间 09:05
-    - cron: "5 1 * * *"
+    # 每天 04:40 UTC = 北京时间 12:40
+    - cron: "40 4 * * *"
   workflow_dispatch: {}
 
 permissions:
