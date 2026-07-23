@@ -1,6 +1,6 @@
 # 通知配置：channel = telegram | serverchan | none
 notify:
-  channel: telegram
+  channel: serverchan
   telegram:
     token_env: TG_TOKEN
     chat_id_env: TG_CHAT_ID
