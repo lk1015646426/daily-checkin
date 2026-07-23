@@ -12,6 +12,7 @@ WorkBuddy（腾讯云 AI 代码助手）的每日签到只能在桌面客户端�
 签到 API：
 - 执行签到：POST https://copilot.tencent.com/v2/billing/meter/daily-checkin
 - 查签到活动状态：POST https://copilot.tencent.com/v2/billing/meter/checkin-activity-status
+- 查账号资源余额：POST https://copilot.tencent.com/v2/billing/meter/get-user-resource
 """
 import json
 import os
@@ -20,6 +21,7 @@ from .base import AuthExpired, BaseSigner
 
 CHECKIN_URL = "https://copilot.tencent.com/v2/billing/meter/daily-checkin"
 STATUS_URL = "https://copilot.tencent.com/v2/billing/meter/checkin-activity-status"
+RESOURCE_URL = "https://copilot.tencent.com/v2/billing/meter/get-user-resource"
 
 # 签到 API 附加请求头（session 已有 UA / Accept）
 API_HEADERS = {
@@ -88,7 +90,7 @@ class WorkBuddySigner(BaseSigner):
             self.session.headers["Authorization"] = f"Bearer {token}"
 
     def checkin(self, auth):
-        """调用签到 API 执行每日签到，并查询当前积分。"""
+        """调用签到 API 执行每日签到，并查询账号实际余额。"""
         s = self.session
         try:
             resp = s.post(CHECKIN_URL, json={}, headers=API_HEADERS, timeout=30)
@@ -108,37 +110,35 @@ class WorkBuddySigner(BaseSigner):
         code = data.get("code")
         msg = data.get("msg", "")
 
-        # 签到后查询当前积分状态
-        status = self._get_status()
+        # 签到后查询签到活动状态（连续天数、本次获得）和账号实际余额
+        activity = self._get_activity_status()
+        total_credits = self._get_total_credits()
+
+        today_credit = activity.get("today_credit", 0) if activity else 0
+        streak = activity.get("streak_days", 0) if activity else 0
 
         # code=0 签到成功
         if code == 0:
-            d = data.get("data", {}) or {}
-            today_credit = d.get("today_credit") or (status.get("today_credit") if status else 0) or 0
-            total = status.get("total_credits", 0) if status else 0
-            streak = status.get("streak_days", 0) if status else 0
             return {
                 "ok": True,
-                "points": total,
+                "points": total_credits,
                 "points_unit": "积分",
-                "msg": f"签到成功 +{today_credit}积分，连续{streak}天，总计{total}积分",
+                "msg": f"签到成功 +{today_credit}积分，连续{streak}天，账号余额{total_credits}积分",
             }
 
         # code=10001 "今天已签到，请明天再来" 也算成功
         if code == 10001 or "已签到" in msg or "already" in msg.lower():
-            total = status.get("total_credits", 0) if status else 0
-            streak = status.get("streak_days", 0) if status else 0
             return {
                 "ok": True,
-                "points": total,
+                "points": total_credits,
                 "points_unit": "积分",
-                "msg": f"今日已签到，连续{streak}天，总计{total}积分",
+                "msg": f"今日已签到 +{today_credit}积分，连续{streak}天，账号余额{total_credits}积分",
             }
 
         return {"ok": False, "points": 0, "msg": msg or f"签到失败 (code={code})"}
 
-    def _get_status(self):
-        """查询签到状态（积分、连续天数等）。"""
+    def _get_activity_status(self):
+        """查询签到活动状态（连续天数、本次获得积分等）。"""
         s = self.session
         try:
             resp = s.post(STATUS_URL, json={}, headers=API_HEADERS, timeout=30)
@@ -149,3 +149,28 @@ class WorkBuddySigner(BaseSigner):
         except Exception as e:
             self.logger.warning(f"WorkBuddy/{self.account.name} 查询签到状态失败: {e}")
         return {}
+
+    def _get_total_credits(self):
+        """查询账号实际可用积分余额（所有有效资源包的剩余之和）。"""
+        s = self.session
+        try:
+            resp = s.post(RESOURCE_URL, json={}, headers=API_HEADERS, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                # 数据结构: data.Response.Data.Accounts[]
+                accounts = (
+                    data.get("data", {})
+                    .get("Response", {})
+                    .get("Data", {})
+                    .get("Accounts", [])
+                )
+                # 只统计 Status=0（有效未过期）的资源包剩余
+                total = sum(
+                    pkg.get("CapacityRemain", 0)
+                    for pkg in accounts
+                    if pkg.get("Status") == 0
+                )
+                return total
+        except Exception as e:
+            self.logger.warning(f"WorkBuddy/{self.account.name} 查询资源余额失败: {e}")
+        return 0
