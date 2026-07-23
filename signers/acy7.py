@@ -97,6 +97,7 @@ class Acy7Signer(BaseSigner):
                 "ok": True,
                 "points": total_usd,
                 "points_unit": "USD",
+                "awarded": awarded_usd,
                 "msg": f"签到 +${awarded_usd:.2f}，总额度 ${total_usd:.2f}",
             }
 
@@ -108,6 +109,7 @@ class Acy7Signer(BaseSigner):
                 "ok": True,
                 "points": total_usd,
                 "points_unit": "USD",
+                "awarded": 0,
                 "msg": f"今日已签到，总额度 ${total_usd:.2f}",
             }
         return {"ok": False, "points": 0, "msg": msg or "签到失败"}

@@ -47,6 +47,8 @@ class BaseSigner(ABC):
             "ok": res.get("ok", False),
             "points": res.get("points"),
             "points_unit": res.get("points_unit", ""),
+            "awarded": res.get("awarded"),
+            "streak": res.get("streak"),
             "msg": res.get("msg", ""),
             "cached": cached,
         }

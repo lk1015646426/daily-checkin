@@ -125,7 +125,9 @@ class WorkBuddySigner(BaseSigner):
                 "ok": True,
                 "points": total_credits,
                 "points_unit": "积分",
-                "msg": f"签到成功 +{today_credit}积分，连续{streak}天，账号余额{credits_str}积分",
+                "awarded": today_credit,
+                "streak": streak,
+                "msg": f"签到成功 +{today_credit}积分，连续{streak}天，余额{credits_str}积分",
             }
 
         # code=10001 "今天已签到，请明天再来" 也算成功
@@ -134,7 +136,9 @@ class WorkBuddySigner(BaseSigner):
                 "ok": True,
                 "points": total_credits,
                 "points_unit": "积分",
-                "msg": f"今日已签到 +{today_credit}积分，连续{streak}天，账号余额{credits_str}积分",
+                "awarded": today_credit,
+                "streak": streak,
+                "msg": f"今日已签到 +{today_credit}积分，连续{streak}天，余额{credits_str}积分",
             }
 
         return {"ok": False, "points": 0, "msg": msg or f"签到失败 (code={code})"}

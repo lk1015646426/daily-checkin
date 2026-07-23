@@ -35,7 +35,7 @@ sites:
       #   %LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info
       #   取其中 auth.accessToken 的值，填入对应 Secrets。
       # token 有效期约 1 年，过期需重新登录客户端提取。
-      - name: acc1
+      - name: 17859510293
         token_env: WB1_TOKEN
-      - name: acc2
+      - name: 19235970293
         token_env: WB2_TOKEN

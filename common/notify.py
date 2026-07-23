@@ -43,23 +43,46 @@ class Notifier:
 
     @staticmethod
     def format_summary(results):
-        lines = ["📅 *每日签到结果*"]
+        lines = ["📅 *每日签到*\n"]
         for r in results:
             status = "✅" if r.get("ok") else "❌"
-            pts = r.get("points")
+            # 站点显示名：workbuddy -> WorkBuddy
+            site = r["site"]
+            site_display = "WorkBuddy" if site == "workbuddy" else site
+            name = f"{site_display} {r['account']}"
+
+            if not r.get("ok"):
+                lines.append(f"{status} {name}：{r.get('msg', '失败')}")
+                continue
+
             unit = r.get("points_unit", "")
-            # 总额度/总积分显示在账号名后面
-            if isinstance(pts, (int, float)) and pts:
+            pts = r.get("points")
+            awarded = r.get("awarded")
+            streak = r.get("streak")
+            parts = []
+
+            # 今日获得
+            if awarded and awarded > 0:
                 if unit == "USD":
-                    pts_s = f" [余额 ${pts:.2f}]"
-                elif unit == "积分":
-                    # 整数不带小数点，非整数保留2位
-                    pts_str = f"{pts:g}" if isinstance(pts, float) else str(pts)
-                    pts_s = f" [余额 {pts_str}{unit}]"
+                    parts.append(f"+${awarded:.2f}")
                 else:
-                    pts_s = f" [{pts}]"
+                    parts.append(f"+{awarded}积分")
+
+            # 余额/总额度（加粗醒目）
+            if isinstance(pts, (int, float)) and pts is not None:
+                if unit == "USD":
+                    parts.append(f"总额度 **${pts:.2f}**")
+                elif unit == "积分":
+                    pts_str = f"{pts:g}" if isinstance(pts, float) else str(pts)
+                    parts.append(f"余额 **{pts_str}积分**")
+
+            # 连续天数
+            if streak and streak > 0:
+                parts.append(f"连续{streak}天")
+
+            if parts:
+                lines.append(f"{status} {name}：" + " | ".join(parts))
             else:
-                pts_s = ""
-            cached = " (缓存复用)" if r.get("cached") else ""
-            lines.append(f"{status} {r['site']}/{r['account']}{pts_s}: {r.get('msg', '')}{cached}")
+                lines.append(f"{status} {name}：{r.get('msg', '')}")
+
         return "\n".join(lines)
