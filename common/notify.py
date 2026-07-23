@@ -43,7 +43,7 @@ class Notifier:
 
     @staticmethod
     def format_summary(results):
-        lines = ["📅 *每日签到*\n"]
+        lines = ["📅 *每日签到*"]
         for r in results:
             status = "✅" if r.get("ok") else "❌"
             # 站点显示名：workbuddy -> WorkBuddy
@@ -85,4 +85,5 @@ class Notifier:
             else:
                 lines.append(f"{status} {name}：{r.get('msg', '')}")
 
-        return "\n".join(lines)
+        # Server酱/Markdown 渲染需要双换行才能分段显示
+        return "\n\n".join(lines)
