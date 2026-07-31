@@ -1,8 +1,9 @@
 """acy7 (New API 网关) 签到站。
-鉴权：POST /api/user/login (账号密码) -> 取 `session` cookie；
+鉴权：POST /api/user/login (账号密码) -> 取 data.access_token；
+      后续请求用 Authorization: Bearer <access_token> 头认证。
       GET /api/user/self -> 取 user id，写入 `new-api-user` 请求头。
 签到：POST /api/user/checkin -> 解析 data.quota_awarded。
-Cloudflare/WAF 拦截时降级到 Playwright 浏览器内绕过。
+WAF/Cloudflare 拦截时降级到 Playwright 浏览器内绕过。
 """
 import json
 from common.session import detect_cloudflare
@@ -23,8 +24,10 @@ class Acy7Signer(BaseSigner):
         base = self.site.base_url.rstrip("/")
         s = self.session
         s.cookies.clear()
+        # 清除可能残留的旧认证头
+        s.headers.pop("Authorization", None)
+        s.headers.pop("new-api-user", None)
 
-        # 用浏览器级别请求头，避免被站点的 CSRF/WAF 规则拦截
         try:
             resp = s.post(
                 f"{base}/api/user/login",
@@ -34,7 +37,6 @@ class Acy7Signer(BaseSigner):
             )
             data = resp.json()
         except json.JSONDecodeError:
-            # 返回非 JSON —— 可能是 WAF/Cloudflare 拦截页
             self.logger.error(
                 f"acy7/{self.account.name} 登录返回非 JSON: "
                 f"HTTP {resp.status_code}, body={resp.text[:500]}"
@@ -47,21 +49,10 @@ class Acy7Signer(BaseSigner):
         except Exception as e:
             raise RuntimeError(f"登录请求失败: {e}")
 
-        # 检测 WAF/Cloudflare 拦截（部分 WAF 会返回 JSON 格式错误）
         if detect_cloudflare(resp.status_code, resp.text):
-            self.logger.warning(f"acy7/{self.account.name} 登录被 WAF 拦截")
             raise CloudflareBlocked()
 
-        # 诊断：记录登录响应的完整信息
-        self.logger.info(
-            f"acy7/{self.account.name} 登录响应: HTTP {resp.status_code}, "
-            f"body={resp.text[:500]}, "
-            f"Set-Cookie={resp.headers.get('Set-Cookie', 'N/A')}, "
-            f"session_cookies={dict(s.cookies)}"
-        )
-
         if not data.get("success"):
-            # 兼容不同版本的错误字段：message / msg / error
             msg = (
                 data.get("message")
                 or data.get("msg")
@@ -70,54 +61,64 @@ class Acy7Signer(BaseSigner):
             )
             raise RuntimeError(f"登录失败: {msg}")
 
-        # 优先使用响应设置的 session cookie；否则尝试从 body 取 token 手动写入
-        session_cookie = s.cookies.get("session")
+        # 新版 New API：登录成功后返回 access_token，用 Bearer 认证
         d = data.get("data")
-        self.logger.info(
-            f"acy7/{self.account.name} 登录成功, data类型={type(d).__name__}, "
-            f"data值={str(d)[:200]}, session_cookie={'有' if session_cookie else '无'}"
-        )
-        token = None
+        access_token = None
         if isinstance(d, dict):
-            token = d.get("token") or d.get("access_token")
-        if not session_cookie and token:
-            s.cookies.set("session", token)
-            session_cookie = token
-        if not session_cookie and isinstance(d, str):
-            s.cookies.set("session", d)
-            session_cookie = d
+            access_token = d.get("access_token") or d.get("token")
 
-        # user_id 优先取 login 响应的 data.id
+        # 兼容旧版：如果没有 access_token，回退到 session cookie
+        if not access_token:
+            session_cookie = s.cookies.get("session")
+            if session_cookie:
+                access_token = session_cookie
+            elif isinstance(d, str):
+                access_token = d
+
+        if not access_token:
+            raise RuntimeError(
+                f"登录成功但未获取到 access_token, 响应: {resp.text[:300]}"
+            )
+
+        # 设置 Bearer token 认证头
+        s.headers["Authorization"] = f"Bearer {access_token}"
+
+        # 获取 user_id（新版需要 Bearer token 才能访问 /api/user/self）
         user_id = None
         if isinstance(d, dict):
             user_id = d.get("id")
         if not user_id:
             try:
-                r = s.get(f"{base}/api/user/self", timeout=30)
-                self.logger.info(
-                    f"acy7/{self.account.name} /api/user/self: "
-                    f"HTTP {r.status_code}, body={r.text[:300]}"
-                )
+                r = s.get(f"{base}/api/user/self", headers=BROWSER_HEADERS, timeout=30)
                 if r.status_code == 200:
                     j = r.json()
                     if j.get("success"):
                         user_id = (j.get("data") or {}).get("id")
             except Exception as e:
-                self.logger.warning(f"acy7/{self.account.name} 查询 /api/user/self 失败: {e}")
+                self.logger.warning(f"acy7/{self.account.name} 查询 user_id 失败: {e}")
         if user_id:
             s.headers["new-api-user"] = str(user_id)
+
         self.logger.info(
-            f"acy7/{self.account.name} 认证信息: "
-            f"session_cookie={'有' if session_cookie else '无'}, "
-            f"user_id={user_id}, cookies={dict(s.cookies)}, "
-            f"headers={ {k:v for k,v in s.headers.items() if k.lower() in ('new-api-user','cookie','authorization')} }"
+            f"acy7/{self.account.name} 登录成功, "
+            f"access_token={'有' if access_token else '无'}, "
+            f"user_id={user_id}"
         )
         return {
-            "token": session_cookie,
+            "token": access_token,
             "user_id": user_id,
-            "cookies": dict(s.cookies),
+            "cookies": {},
             "expires_at": None,
         }
+
+    def apply_auth(self, auth):
+        """从缓存恢复 Bearer token 认证。"""
+        token = auth.get("token")
+        if token:
+            self.session.headers["Authorization"] = f"Bearer {token}"
+        uid = auth.get("user_id")
+        if uid:
+            self.session.headers["new-api-user"] = str(uid)
 
     def checkin(self, auth):
         base = self.site.base_url.rstrip("/")
@@ -131,22 +132,16 @@ class Acy7Signer(BaseSigner):
         except Exception as e:
             raise RuntimeError(f"签到请求失败: {e}")
         if resp.status_code == 401:
-            self.logger.warning(
-                f"acy7/{self.account.name} 签到返回 401, "
-                f"body={resp.text[:300]}, cookies={dict(s.cookies)}, "
-                f"headers={ {k:v for k,v in s.headers.items() if k.lower() in ('new-api-user','cookie','authorization')} }"
-            )
             raise AuthExpired()
         try:
             data = resp.json()
         except json.JSONDecodeError:
             if detect_cloudflare(resp.status_code, resp.text):
                 raise CloudflareBlocked()
-            raise RuntimeError("签到返回非 JSON 且非 WAF 拦截")
+            raise RuntimeError(f"签到返回非 JSON (HTTP {resp.status_code}): {resp.text[:200]}")
         if resp.status_code == 200 and data.get("success"):
             d = data.get("data", {}) or {}
             awarded = d.get("quota_awarded") or 0
-            # 查询账户总额度
             total_quota = self._get_quota()
             total_usd = round(total_quota / 500000, 2) if total_quota else 0
             awarded_usd = round(awarded / 500000, 2) if awarded else 0
@@ -175,7 +170,7 @@ class Acy7Signer(BaseSigner):
         base = self.site.base_url.rstrip("/")
         s = self.session
         try:
-            r = s.get(f"{base}/api/user/self", timeout=30)
+            r = s.get(f"{base}/api/user/self", headers=BROWSER_HEADERS, timeout=30)
             if r.status_code == 200:
                 j = r.json()
                 if j.get("success"):
@@ -193,18 +188,12 @@ class Acy7Signer(BaseSigner):
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             ctx = browser.new_context()
-            if cached.get("cookies"):
-                try:
-                    ctx.add_cookies(cached["cookies"])
-                except Exception:
-                    pass
             page = ctx.new_page()
             try:
                 page.goto(base, wait_until="domcontentloaded", timeout=60000)
-                # 等待挑战通过（通常由浏览器自动完成）
                 page.wait_for_timeout(8000)
-                # 确保已登录
-                page.evaluate(
+                # 浏览器内登录并签到
+                login_result = page.evaluate(
                     """async (u, pw) => {
                         const r = await fetch('/api/user/login', {
                             method:'POST',
@@ -215,7 +204,12 @@ class Acy7Signer(BaseSigner):
                             },
                             body: JSON.stringify({username:u, password:pw})
                         });
-                        return await r.text();
+                        const data = await r.json();
+                        if (data.success && data.data && data.data.access_token) {
+                            // 用 access_token 设置后续请求的认证头
+                            window.__token = data.data.access_token;
+                        }
+                        return JSON.stringify(data);
                     }""",
                     self.account.user,
                     self.account.password,
@@ -223,23 +217,27 @@ class Acy7Signer(BaseSigner):
                 page.wait_for_timeout(2000)
                 result = page.evaluate(
                     """async () => {
-                        const r = await fetch('/api/user/checkin', {method:'POST'});
+                        const headers = {};
+                        if (window.__token) {
+                            headers['Authorization'] = 'Bearer ' + window.__token;
+                        }
+                        const r = await fetch('/api/user/checkin', {
+                            method:'POST',
+                            headers: headers
+                        });
                         return await r.text();
                     }"""
                 )
                 data = json.loads(result)
-                cookies = ctx.cookies()
-                self.store.save(
-                    self.site_name,
-                    self.account.name,
-                    {"cookies": cookies, "user_id": cached.get("user_id"), "expires_at": None},
-                )
                 if data.get("success"):
                     d = data.get("data", {}) or {}
+                    awarded = d.get("quota_awarded") or 0
+                    awarded_usd = round(awarded / 500000, 2) if awarded else 0
                     return self._result(
-                        {"ok": True, "points": d.get("quota_awarded"), "msg": "浏览器绕过签到成功"}
+                        {"ok": True, "points": awarded_usd, "points_unit": "USD",
+                         "msg": f"浏览器签到成功 +${awarded_usd:.2f}"}
                     )
-                return self._result({"ok": False, "msg": data.get("message", "浏览器绕过签到失败")})
+                return self._result({"ok": False, "msg": data.get("message", "浏览器签到失败")})
             except Exception as e:
                 return self._result({"ok": False, "msg": f"浏览器绕过异常: {e}"})
             finally:
