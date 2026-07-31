@@ -42,6 +42,9 @@ jobs:
           ACY7_PASS: ${{ secrets.ACY7_PASS }}
           WB1_TOKEN: ${{ secrets.WB1_TOKEN }}
           WB2_TOKEN: ${{ secrets.WB2_TOKEN }}
+          TRAE1_TOKEN: ${{ secrets.TRAE1_TOKEN }}
+          TRAE2_TOKEN: ${{ secrets.TRAE2_TOKEN }}
+          TRAE_DEVICE_ID: ${{ secrets.TRAE_DEVICE_ID }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
