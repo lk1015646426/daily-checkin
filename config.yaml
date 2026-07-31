@@ -39,3 +39,24 @@ sites:
         token_env: WB1_TOKEN
       - name: 19235970293
         token_env: WB2_TOKEN
+
+  trae:
+    enabled: true
+    type: trae
+    # TRAE 桌面客户端积分签到
+    # 签到 API 直接调用 api.trae.cn，需从桌面客户端提取 refresh token
+    base_url: https://api.trae.cn
+    accounts:
+      # TRAE 用手机号+验证码登录桌面客户端，CI 无法自动登录。
+      # 需从 TRAE 桌面客户端的 storage.json 提取 refresh token：
+      #   storage.json 路径（TRAE SOLO CN）：
+      #   %APPDATA%\TRAE SOLO CN\User\globalStorage\storage.json
+      #   其中 iCubeAuthInfo://icube.cloudide 字段为加密 token（dGMFEAAA 前缀）
+      #   需用解密脚本提取 refresh token，填入对应 Secrets。
+      # refresh_token 有效期 14 天，过期需重新登录客户端提取。
+      # device_id 从 storage.json 的 telemetry.devDeviceId 字段获取，
+      # 填入 TRAE_DEVICE_ID Secret（所有账号共用）。
+      - name: 17859510293
+        token_env: TRAE1_TOKEN
+      - name: 19235970293
+        token_env: TRAE2_TOKEN

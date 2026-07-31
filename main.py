@@ -16,10 +16,12 @@ from common.session import create_session
 from common.store import TokenStore
 from signers.acy7 import Acy7Signer
 from signers.workbuddy import WorkBuddySigner
+from signers.trae import TraeSigner
 
 SIGNERS = {
     "acy7": Acy7Signer,
     "workbuddy": WorkBuddySigner,
+    "trae": TraeSigner,
 }
 
 
