@@ -52,12 +52,15 @@ class Acy7Signer(BaseSigner):
             self.logger.warning(f"acy7/{self.account.name} 登录被 WAF 拦截")
             raise CloudflareBlocked()
 
+        # 诊断：记录登录响应的完整信息
+        self.logger.info(
+            f"acy7/{self.account.name} 登录响应: HTTP {resp.status_code}, "
+            f"body={resp.text[:500]}, "
+            f"Set-Cookie={resp.headers.get('Set-Cookie', 'N/A')}, "
+            f"session_cookies={dict(s.cookies)}"
+        )
+
         if not data.get("success"):
-            # 记录完整响应以便诊断
-            self.logger.error(
-                f"acy7/{self.account.name} 登录失败 - "
-                f"HTTP {resp.status_code}, 响应: {resp.text[:500]}"
-            )
             # 兼容不同版本的错误字段：message / msg / error
             msg = (
                 data.get("message")
@@ -70,6 +73,10 @@ class Acy7Signer(BaseSigner):
         # 优先使用响应设置的 session cookie；否则尝试从 body 取 token 手动写入
         session_cookie = s.cookies.get("session")
         d = data.get("data")
+        self.logger.info(
+            f"acy7/{self.account.name} 登录成功, data类型={type(d).__name__}, "
+            f"data值={str(d)[:200]}, session_cookie={'有' if session_cookie else '无'}"
+        )
         token = None
         if isinstance(d, dict):
             token = d.get("token") or d.get("access_token")
@@ -87,14 +94,24 @@ class Acy7Signer(BaseSigner):
         if not user_id:
             try:
                 r = s.get(f"{base}/api/user/self", timeout=30)
+                self.logger.info(
+                    f"acy7/{self.account.name} /api/user/self: "
+                    f"HTTP {r.status_code}, body={r.text[:300]}"
+                )
                 if r.status_code == 200:
                     j = r.json()
                     if j.get("success"):
                         user_id = (j.get("data") or {}).get("id")
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(f"acy7/{self.account.name} 查询 /api/user/self 失败: {e}")
         if user_id:
             s.headers["new-api-user"] = str(user_id)
+        self.logger.info(
+            f"acy7/{self.account.name} 认证信息: "
+            f"session_cookie={'有' if session_cookie else '无'}, "
+            f"user_id={user_id}, cookies={dict(s.cookies)}, "
+            f"headers={ {k:v for k,v in s.headers.items() if k.lower() in ('new-api-user','cookie','authorization')} }"
+        )
         return {
             "token": session_cookie,
             "user_id": user_id,
@@ -114,6 +131,11 @@ class Acy7Signer(BaseSigner):
         except Exception as e:
             raise RuntimeError(f"签到请求失败: {e}")
         if resp.status_code == 401:
+            self.logger.warning(
+                f"acy7/{self.account.name} 签到返回 401, "
+                f"body={resp.text[:300]}, cookies={dict(s.cookies)}, "
+                f"headers={ {k:v for k,v in s.headers.items() if k.lower() in ('new-api-user','cookie','authorization')} }"
+            )
             raise AuthExpired()
         try:
             data = resp.json()

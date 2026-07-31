@@ -81,5 +81,17 @@ class BaseSigner(ABC):
             return self._result({"ok": False, "msg": "Cloudflare/WAF 拦截且未实现绕过"})
         self.store.save(self.site_name, self.account.name, auth)
         self.apply_auth(auth)
-        res = self.checkin(auth)
+        try:
+            res = self.checkin(auth)
+        except AuthExpired:
+            self.logger.warning(
+                f"{self.site_name}/{self.account.name} 全新登录后签到仍 401，尝试浏览器绕过"
+            )
+            if hasattr(self, "_cf_bypass"):
+                return self._cf_bypass()
+            return self._result({"ok": False, "msg": "登录后签到仍返回 401"})
+        except CloudflareBlocked:
+            if hasattr(self, "_cf_bypass"):
+                return self._cf_bypass()
+            return self._result({"ok": False, "msg": "Cloudflare/WAF 拦截且未实现绕过"})
         return self._result(res)
