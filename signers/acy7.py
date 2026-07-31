@@ -1,14 +1,19 @@
 """acy7 (New API 网关) 签到站。
-
 鉴权：POST /api/user/login (账号密码) -> 取 `session` cookie；
       GET /api/user/self -> 取 user id，写入 `new-api-user` 请求头。
 签到：POST /api/user/checkin -> 解析 data.quota_awarded。
-Cloudflare 拦截时降级到 Playwright 浏览器内绕过。
+Cloudflare/WAF 拦截时降级到 Playwright 浏览器内绕过。
 """
 import json
-
 from common.session import detect_cloudflare
 from .base import AuthExpired, BaseSigner, CloudflareBlocked
+
+# 浏览器级别请求头：New API 站点可能检查 Origin/Referer 做 CSRF 防护
+BROWSER_HEADERS = {
+    "Content-Type": "application/json",
+    "Origin": "https://acy7.com",
+    "Referer": "https://acy7.com/",
+}
 
 
 class Acy7Signer(BaseSigner):
@@ -18,18 +23,49 @@ class Acy7Signer(BaseSigner):
         base = self.site.base_url.rstrip("/")
         s = self.session
         s.cookies.clear()
+
+        # 用浏览器级别请求头，避免被站点的 CSRF/WAF 规则拦截
         try:
             resp = s.post(
                 f"{base}/api/user/login",
                 json={"username": self.account.user, "password": self.account.password},
+                headers=BROWSER_HEADERS,
                 timeout=30,
             )
             data = resp.json()
+        except json.JSONDecodeError:
+            # 返回非 JSON —— 可能是 WAF/Cloudflare 拦截页
+            self.logger.error(
+                f"acy7/{self.account.name} 登录返回非 JSON: "
+                f"HTTP {resp.status_code}, body={resp.text[:500]}"
+            )
+            if detect_cloudflare(resp.status_code, resp.text):
+                raise CloudflareBlocked()
+            raise RuntimeError(
+                f"登录返回非 JSON (HTTP {resp.status_code}): {resp.text[:200]}"
+            )
         except Exception as e:
             raise RuntimeError(f"登录请求失败: {e}")
 
+        # 检测 WAF/Cloudflare 拦截（部分 WAF 会返回 JSON 格式错误）
+        if detect_cloudflare(resp.status_code, resp.text):
+            self.logger.warning(f"acy7/{self.account.name} 登录被 WAF 拦截")
+            raise CloudflareBlocked()
+
         if not data.get("success"):
-            raise RuntimeError(f"登录失败: {data.get('message')}")
+            # 记录完整响应以便诊断
+            self.logger.error(
+                f"acy7/{self.account.name} 登录失败 - "
+                f"HTTP {resp.status_code}, 响应: {resp.text[:500]}"
+            )
+            # 兼容不同版本的错误字段：message / msg / error
+            msg = (
+                data.get("message")
+                or data.get("msg")
+                or data.get("error")
+                or str(data)
+            )
+            raise RuntimeError(f"登录失败: {msg}")
 
         # 优先使用响应设置的 session cookie；否则尝试从 body 取 token 手动写入
         session_cookie = s.cookies.get("session")
@@ -44,9 +80,7 @@ class Acy7Signer(BaseSigner):
             s.cookies.set("session", d)
             session_cookie = d
 
-        # user_id 优先取 login 响应的 data.id：/api/user/self 需要 new-api-user 头，
-        # 未设置时返回 401，而 login 响应本就带 id，直接用可避免"要头才能取 id、
-        # 要 id 才能设头"的死循环。仅当 login 无 id 时才回退调 /api/user/self。
+        # user_id 优先取 login 响应的 data.id
         user_id = None
         if isinstance(d, dict):
             user_id = d.get("id")
@@ -61,7 +95,6 @@ class Acy7Signer(BaseSigner):
                 pass
         if user_id:
             s.headers["new-api-user"] = str(user_id)
-
         return {
             "token": session_cookie,
             "user_id": user_id,
@@ -73,10 +106,13 @@ class Acy7Signer(BaseSigner):
         base = self.site.base_url.rstrip("/")
         s = self.session
         try:
-            resp = s.post(f"{base}/api/user/checkin", timeout=30)
+            resp = s.post(
+                f"{base}/api/user/checkin",
+                headers=BROWSER_HEADERS,
+                timeout=30,
+            )
         except Exception as e:
             raise RuntimeError(f"签到请求失败: {e}")
-
         if resp.status_code == 401:
             raise AuthExpired()
         try:
@@ -84,8 +120,7 @@ class Acy7Signer(BaseSigner):
         except json.JSONDecodeError:
             if detect_cloudflare(resp.status_code, resp.text):
                 raise CloudflareBlocked()
-            raise RuntimeError("签到返回非 JSON 且非 Cloudflare 拦截")
-
+            raise RuntimeError("签到返回非 JSON 且非 WAF 拦截")
         if resp.status_code == 200 and data.get("success"):
             d = data.get("data", {}) or {}
             awarded = d.get("quota_awarded") or 0
@@ -100,7 +135,6 @@ class Acy7Signer(BaseSigner):
                 "awarded": awarded_usd,
                 "msg": f"签到 +${awarded_usd:.2f}，总额度 ${total_usd:.2f}",
             }
-
         msg = data.get("message", "") or ""
         if "已签到" in msg or "already" in msg.lower() or "今日" in msg:
             total_quota = self._get_quota()
@@ -129,7 +163,7 @@ class Acy7Signer(BaseSigner):
         return 0
 
     def _cf_bypass(self):
-        """Cloudflare 拦截时，用 Playwright 在浏览器内完成挑战并签到。"""
+        """WAF/Cloudflare 拦截时，用 Playwright 在浏览器内完成挑战并签到。"""
         from playwright.sync_api import sync_playwright
 
         base = self.site.base_url.rstrip("/")
@@ -145,13 +179,18 @@ class Acy7Signer(BaseSigner):
             page = ctx.new_page()
             try:
                 page.goto(base, wait_until="domcontentloaded", timeout=60000)
-                # 等待 CF 挑战通过（通常由浏览器自动完成）
+                # 等待挑战通过（通常由浏览器自动完成）
                 page.wait_for_timeout(8000)
                 # 确保已登录
                 page.evaluate(
                     """async (u, pw) => {
                         const r = await fetch('/api/user/login', {
-                            method:'POST', headers:{'Content-Type':'application/json'},
+                            method:'POST',
+                            headers:{
+                                'Content-Type':'application/json',
+                                'Origin': window.location.origin,
+                                'Referer': window.location.origin + '/',
+                            },
                             body: JSON.stringify({username:u, password:pw})
                         });
                         return await r.text();
@@ -176,10 +215,10 @@ class Acy7Signer(BaseSigner):
                 if data.get("success"):
                     d = data.get("data", {}) or {}
                     return self._result(
-                        {"ok": True, "points": d.get("quota_awarded"), "msg": "CF绕过签到成功"}
+                        {"ok": True, "points": d.get("quota_awarded"), "msg": "浏览器绕过签到成功"}
                     )
-                return self._result({"ok": False, "msg": data.get("message", "CF绕过签到失败")})
+                return self._result({"ok": False, "msg": data.get("message", "浏览器绕过签到失败")})
             except Exception as e:
-                return self._result({"ok": False, "msg": f"CF绕过异常: {e}"})
+                return self._result({"ok": False, "msg": f"浏览器绕过异常: {e}"})
             finally:
                 browser.close()

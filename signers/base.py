@@ -7,7 +7,7 @@ class AuthExpired(Exception):
 
 
 class CloudflareBlocked(Exception):
-    """被 Cloudflare 拦截。"""
+    """被 Cloudflare/WAF 拦截。"""
 
 
 class BaseSigner(ABC):
@@ -66,12 +66,19 @@ class BaseSigner(ABC):
             except CloudflareBlocked:
                 if hasattr(self, "_cf_bypass"):
                     return self._cf_bypass()
-                return self._result({"ok": False, "msg": "Cloudflare 拦截且未实现绕过"})
+                return self._result({"ok": False, "msg": "Cloudflare/WAF 拦截且未实现绕过"})
             except Exception as e:
                 self.logger.warning(f"{self.site_name}/{self.account.name} 复用时异常: {e}")
-
         # 全新登录
-        auth = self.login()
+        try:
+            auth = self.login()
+        except CloudflareBlocked:
+            self.logger.warning(
+                f"{self.site_name}/{self.account.name} 登录被 WAF 拦截，尝试浏览器绕过"
+            )
+            if hasattr(self, "_cf_bypass"):
+                return self._cf_bypass()
+            return self._result({"ok": False, "msg": "Cloudflare/WAF 拦截且未实现绕过"})
         self.store.save(self.site_name, self.account.name, auth)
         self.apply_auth(auth)
         res = self.checkin(auth)
