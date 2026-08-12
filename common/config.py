@@ -3,7 +3,8 @@
 凭证支持三类：
 - 账号密码类（如 acy7）：user_env + pass_env
 - 登录态类（如 WorkBuddy 旧方案）：cookies_env（整段 cookies JSON）
-- Token 类（如 WorkBuddy 新方案）：token_env（access token 字符串）
+- Token 类（如 WorkBuddy/TRAE）：token_env（token 字符串）
+- 账号附加设备标识（如 TRAE）：device_env
 """
 import os
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ class Account:
     password: str = None
     cookies_env: str = None
     token_env: str = None
+    device_env: str = None
 
 
 @dataclass
@@ -47,14 +49,10 @@ class Config:
         return self.data.get("retry", {})
 
     def sites(self, require_credentials=True):
-        """解析站点与账号。登录凭证来自环境变量：
-        - 账号密码类（如 acy7）：user_env + pass_env
-        - 登录态类（如 WorkBuddy 旧方案）：cookies_env（整段 cookies JSON）
-        - Token 类（如 WorkBuddy 新方案）：token_env（access token 字符串）
-        任一满足即视为可用账号。
+        """解析站点与账号。
 
-        require_credentials=False 时不做凭证过滤（用于 capture 工具：此时
-        账号本就还没有 cookies/token，需要先手动登录抓取）。
+        登录凭证仍由账号密码、cookies 或 token 决定是否可用；device_env
+        是 token 站点的附加认证参数，不单独视为登录凭证。
         """
         out = []
         for key, sc in (self.data.get("sites") or {}).items():
@@ -62,11 +60,18 @@ class Config:
                 continue
             accounts = []
             for a in sc.get("accounts", []) or []:
-                name = a.get("name") or a.get("user_env") or a.get("cookies_env") or a.get("token_env") or key
+                name = (
+                    a.get("name")
+                    or a.get("user_env")
+                    or a.get("cookies_env")
+                    or a.get("token_env")
+                    or key
+                )
                 user_env = a.get("user_env")
                 pass_env = a.get("pass_env")
                 cookies_env = a.get("cookies_env")
                 token_env = a.get("token_env")
+                device_env = a.get("device_env")
                 user = os.environ.get(user_env) if user_env else None
                 pwd = os.environ.get(pass_env) if pass_env else None
                 cookies = os.environ.get(cookies_env) if cookies_env else None
@@ -87,6 +92,7 @@ class Config:
                         password=pwd,
                         cookies_env=cookies_env,
                         token_env=token_env,
+                        device_env=device_env,
                     )
                 )
             if not accounts:

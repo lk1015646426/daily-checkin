@@ -2,8 +2,8 @@ name: Daily Checkin
 
 on:
   schedule:
-    # 每天 04:40 UTC = 北京时间 12:40
-    - cron: "40 4 * * *"
+    # 每天 20:00 UTC = 次日北京时间 04:00
+    - cron: "0 20 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -22,13 +22,14 @@ jobs:
         with:
           python-version: "3.11"
 
+      # 每次运行使用唯一键保存最新认证；只从 v2 前缀恢复，避免复用旧版缓存。
       - name: Restore token cache
         uses: actions/cache@v4
         with:
           path: store
-          key: signin-token-cache
+          key: signin-token-cache-v2-${{ github.run_id }}
           restore-keys: |
-            signin-token-cache
+            signin-token-cache-v2-
 
       - name: Install dependencies
         run: |
@@ -43,16 +44,10 @@ jobs:
           WB1_TOKEN: ${{ secrets.WB1_TOKEN }}
           WB2_TOKEN: ${{ secrets.WB2_TOKEN }}
           TRAE1_TOKEN: ${{ secrets.TRAE1_TOKEN }}
+          TRAE1_DEVICE_ID: ${{ secrets.TRAE1_DEVICE_ID }}
           TRAE2_TOKEN: ${{ secrets.TRAE2_TOKEN }}
-          TRAE_DEVICE_ID: ${{ secrets.TRAE_DEVICE_ID }}
+          TRAE2_DEVICE_ID: ${{ secrets.TRAE2_DEVICE_ID }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
         run: python main.py
-
-      - name: Save token cache
-        if: always()
-        uses: actions/cache@v4
-        with:
-          path: store
-          key: signin-token-cache

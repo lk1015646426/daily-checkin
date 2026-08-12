@@ -52,7 +52,7 @@ class Notifier:
             status = "✅" if r.get("ok") else "❌"
             # 站点显示名：workbuddy -> WorkBuddy
             site = r["site"]
-            site_display = "WorkBuddy" if site == "workbuddy" else site
+            site_display = {"workbuddy": "WorkBuddy", "trae": "TRAE"}.get(site, site)
             name = f"{site_display} {r['account']}"
 
             if not r.get("ok"):
@@ -77,7 +77,10 @@ class Notifier:
                 if unit == "USD":
                     parts.append(f"总额度 **${pts:.2f}**")
                 elif unit == "积分":
-                    pts_str = f"{pts:g}" if isinstance(pts, float) else str(pts)
+                    if isinstance(pts, float) and (pts == float("inf") or pts == float("-inf")):
+                        pts_str = "无限"
+                    else:
+                        pts_str = f"{pts:g}" if isinstance(pts, float) else str(pts)
                     parts.append(f"余额 **{pts_str}积分**")
 
             # 连续天数

@@ -1,84 +1,194 @@
-# 每日自动签到（acy7 + WorkBuddy）
+# 云签到
 
-通过 GitHub Actions **免费**定时运行：每天自动调用接口 / 驱动网页，完成
-[acy7.com（New API 网关）](https://acy7.com) 与 **WorkBuddy** 的每日签到领积分，
-结果推送到 Telegram / Server酱。
+一个基于 Python 和 GitHub Actions 的每日自动签到脚本，目前支持：
 
-- acy7：纯 `requests` 直连 New API 接口（`/api/user/login` → `/api/user/checkin`），账号密码自动登录。
-- WorkBuddy：用 Playwright 驱动其**网页端**；但登录方式是手机号+验证码 / 微信扫码，CI 无法自动登录，
-  故需你**本机手动登录一次**，导出登录态 cookies 存入 GitHub Secrets，之后 CI 每天带 cookies 自动签到。
-- 支持多账号（当前配置：acy7 ×1、WorkBuddy ×2）。
+- **acy7**：使用账号密码登录并签到
+- **WorkBuddy / CodeBuddy**：使用桌面客户端提取的 access token 签到
+- **TRAE**：使用桌面客户端提取的 refresh token 签到
+- **通知**：支持 Telegram、Server酱，或关闭通知
+
+脚本可以通过 GitHub Actions 定时运行，也可以在本地手动执行。
+
+> 本项目仅用于本人账号的个人自动化。请遵守相关平台的服务条款，不要用于刷量、滥用多账号或其他违规用途。
 
 ## 目录结构
 
+```text
+common/                       公共模块：配置、会话、缓存、日志和通知
+signers/                      各平台签到实现
+.github/workflows/            GitHub Actions 工作流
+config.yaml                   站点、账号别名、通知和重试配置
+.env.example                  本地环境变量示例
+main.py                       程序入口
+requirements.txt              Python 依赖
+logs/.gitkeep                 日志目录占位文件
 ```
-common/        公共模块：config / session / store / logger / notify
-signers/       各平台签到站：acy7.py、workbuddy.py
-scripts/       capture_workbuddy_token.py（本机抓取 WorkBuddy 登录态 cookies）
-.github/       Actions 工作流（每日定时 + 手动触发）
-config.yaml    站点 / 账号(env引用) / 通知 / 选择器配置
-main.py        编排入口
+
+以下内容属于本地或运行时数据，已通过 `.gitignore` 排除：
+
+- `.env`：本地真实凭证
+- `store/`：登录态和 token 缓存
+- `logs/*.log`：运行日志
+- `.workbuddy/`：本地工作记忆
+- `__pycache__/`、`*.pyc`：Python 缓存
+
+## GitHub Actions 部署
+
+### 1. 准备仓库
+
+建议使用 **Private 仓库** 保存本项目。将代码推送到 GitHub 后，在仓库中打开：
+
+`Settings → Secrets and variables → Actions → New repository secret`
+
+### 2. 添加 Secrets
+
+根据实际启用的站点添加以下 Secrets。
+
+#### acy7
+
+| Secret | 说明 |
+| --- | --- |
+| `ACY7_USER` | acy7 用户名 |
+| `ACY7_PASS` | acy7 密码 |
+
+#### WorkBuddy / CodeBuddy
+
+| Secret | 说明 |
+| --- | --- |
+| `WB1_TOKEN` | 第一个 WorkBuddy 账号的 access token |
+| `WB2_TOKEN` | 第二个 WorkBuddy 账号的 access token |
+
+#### TRAE
+
+| Secret | 说明 |
+| --- | --- |
+| `TRAE1_TOKEN` | TRAE 账号 `1780293` 的 refresh token |
+| `TRAE1_DEVICE_ID` | TRAE 账号 `1780293` 的客户端设备 ID |
+| `TRAE2_TOKEN` | TRAE 账号 `1920293` 的 refresh token |
+| `TRAE2_DEVICE_ID` | TRAE 账号 `1920293` 的客户端设备 ID |
+
+两个账号的 Token 和设备 ID 必须分别从各自的登录状态提取并成对填写，不能把一个账号的 Token 与另一个账号的设备 ID 混用。
+
+#### 通知（二选一）
+
+Telegram：
+
+| Secret | 说明 |
+| --- | --- |
+| `TG_TOKEN` | Telegram Bot Token |
+| `TG_CHAT_ID` | Telegram Chat ID |
+
+Server酱：
+
+| Secret | 说明 |
+| --- | --- |
+| `SERVERCHAN_KEY` | Server酱 SendKey |
+
+不使用通知时，将 `config.yaml` 中的通知渠道改为：
+
+```yaml
+notify:
+  channel: none
 ```
 
-## 一、准备
+### 3. 执行时间
 
-### 1. 通知渠道
-- **Telegram（推荐）**：找 [@BotFather](https://t.me/BotFather) 创建 Bot，拿 `TG_TOKEN`（形如 `123456:AAxxx`）；
-  给 Bot 发一条消息后访问 `https://api.telegram.org/bot<TG_TOKEN>/getUpdates` 拿 `TG_CHAT_ID`。
-- **Server酱（微信，更省事）**：去 serverchan.com 微信登录拿 `SERVERCHAN_KEY`，
-  并在 `config.yaml` 把 `notify.channel` 改成 `serverchan`。
-- 二选一，`config.yaml` 的 `channel` 控制。
+工作流文件位于 `.github/workflows/daily-checkin.yml`，默认配置为：
 
-### 2. 账号与登录态
-- **acy7**：准备账号密码，直接填 Secrets `ACY7_USER` / `ACY7_PASS`。
-- **WorkBuddy（两个账号）**：**不能用账号密码自动登录**（手机号+验证码/微信扫码）。
-  需本机运行 `scripts/capture_workbuddy_token.py` 手动登录，把导出的 cookies JSON
-  分别填进 Secrets `WB1_COOKIES` / `WB2_COOKIES`（详见第四节）。
+- **每天北京时间 04:00 执行**
+- 对应 UTC 时间为前一天 20:00
+- cron 表达式为 `0 20 * * *`
+- 支持在 GitHub Actions 页面点击 **Run workflow** 手动运行
 
-## 二、部署到 GitHub（免费，零服务器）
+GitHub Actions 的 cron 使用 UTC，并且定时任务可能因平台负载稍有延迟。
 
-1. 新建 **Private** 仓库并推送本目录（已完成）。
-2. 仓库 `Settings → Secrets and variables → Actions → New repository secret` 添加：
-   - `ACY7_USER` / `ACY7_PASS`
-   - `WB1_COOKIES` / `WB2_COOKIES`（cookies JSON，来自 capture 脚本）
-   - `TG_TOKEN` / `TG_CHAT_ID`（或 `SERVERCHAN_KEY`）
-3. `Actions` 页面启用 workflow，点 `Run workflow` 手动验证。
-4. 之后每天 **北京时间 09:05** 自动执行（改时间改 `daily-checkin.yml` 的 cron）。
+### 4. 查看运行结果
 
-> acy7 登录态走 `actions/cache` 自动复用/重登；WorkBuddy 登录态即 Secrets 中的 cookies。
+在仓库的 **Actions** 页面查看运行日志。只要任意账号签到失败，程序就会以退出码 `1` 结束，使该次工作流显示失败；通知仍会尝试发送完整汇总。
 
-## 三、本地运行 / 调试
+## 本地运行
 
-```bash
-python -m venv .venv && .venv\Scripts\activate      # Windows
+建议使用 Python 3.11。Windows 示例：
+
+```powershell
+cd 'C:\路径\云签到'
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-playwright install chromium
-cp .env.example .env      # acy7 填账号密码；WB 填 cookies JSON
+
+Copy-Item .env.example .env
+# 编辑 .env，填入本地测试所需的账号、token 和通知配置
+
 python main.py
 ```
 
-本地运行同样会把 acy7 登录态写到 `store/tokens.json`（已被 .gitignore 忽略，不泄露）。
-
-## 四、获取 WorkBuddy 登录态（必做）
-
-WorkBuddy 需手机验证码 / 微信扫码，CI 无法自动，因此首次（及 cookies 失效时）需本机做一次：
+Linux/macOS 示例：
 
 ```bash
+cd /path/to/云签到
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-playwright install chromium
-python scripts/capture_workbuddy_token.py
+cp .env.example .env
+python main.py
 ```
 
-脚本会弹出浏览器，为 `acc1`、`acc2` 依次手动登录；登录成功后终端打印该账号的 cookies JSON。
-将每个账号的 JSON **整段**复制进对应 Secrets（`WB1_COOKIES` / `WB2_COOKIES`）。
-cookies 一般数天~数周有效，失效后重复本步骤更新 Secrets 即可。
+不要把真实凭证写入 `config.yaml`，也不要提交 `.env`、token 缓存或运行日志。
 
-## 五、配置调优
+## 配置说明
 
-- `config.yaml → sites.workbuddy.checkin`：按实际页面调整选择器/文案。
-- 多账号：在 `accounts` 继续追加（如 `name: acc3, cookies_env: WB3_COOKIES`），并补 Secrets 与 workflow `env`。
-- 通知：`notify.channel` 可选 `telegram` / `serverchan` / `none`。
+`config.yaml` 保存站点结构和环境变量名称，不保存账号密码或 token：
 
-## 合规提示
+- `sites.<site>.enabled`：是否启用站点
+- `sites.<site>.accounts`：账号别名和对应的环境变量名
+- `notify.channel`：`telegram`、`serverchan` 或 `none`
+- `retry.attempts`：失败重试次数
+- `retry.backoff_seconds`：重试间隔秒数
 
-仅用于本人账号的每日签到个人自动化；请遵守两平台服务条款，勿用于刷量或滥用多账号。
+当前账号使用脱敏别名，不在现行配置中保存完整手机号。新增账号时，请使用别名，并在 `.env.example`、GitHub Actions 工作流和 GitHub Secrets 中同步增加对应变量。
+
+## Token 获取说明
+
+### WorkBuddy / CodeBuddy
+
+在已经登录的桌面客户端中找到认证文件，读取其中的 `auth.accessToken`，然后保存到对应的 GitHub Secret：
+
+```text
+%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info
+```
+
+不同客户端版本的文件位置可能不同。不要把认证文件或 token 提交到 Git。
+
+### TRAE
+
+在已经登录的 TRAE 客户端中找到 `storage.json`，提取 refresh token 和设备 ID：
+
+```text
+%APPDATA%\TRAE SOLO CN\User\globalStorage\storage.json
+```
+
+- 账号 `1780293` 的 refresh token 和 `telemetry.devDeviceId` 分别填入 `TRAE1_TOKEN`、`TRAE1_DEVICE_ID`
+- 账号 `1920293` 的 refresh token 和 `telemetry.devDeviceId` 分别填入 `TRAE2_TOKEN`、`TRAE2_DEVICE_ID`
+- Token 与设备 ID 必须来自同一个账号的登录状态，不得交叉使用
+- refresh token 失效后，需要重新登录对应账号并更新该账号的两个 GitHub Secrets
+- 如果账号 `1780293` 返回 401，请优先重新提取并更新 `TRAE1_TOKEN` 和 `TRAE1_DEVICE_ID`；工作流不会在日志或通知中输出真实凭证
+
+TRAE 签到完成后会额外查询账户权益余额，因此通知会与 WorkBuddy 使用相同的信息结构，例如：
+
+```text
+✅ TRAE 1780293：+200积分 | 余额 1600积分
+```
+
+## 安全注意事项
+
+- 不要提交 `.env`、`store/`、token 文件、客户端认证文件或运行日志。
+- 不要在 Issue、Pull Request 或日志中粘贴密码、token、cookie、Bot Token 或 SendKey。
+- 如果凭证曾经泄露，应立即在对应平台撤销或更换，并同步更新 GitHub Secrets。
+- 即使仓库设置为 Private，也应继续按照敏感凭证标准管理代码和提交记录。
+
+## 许可证
+
+当前仓库未声明开源许可证。如果以后公开分发，请先补充合适的 LICENSE 文件；仅在 Private 仓库中自用时可暂不添加。

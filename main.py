@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from common.config import Config
 
-load_dotenv()  # 读取项目根目录 .env（含 WB1_COOKIES 等登录态）
+load_dotenv()  # 读取项目根目录 .env（账号、token 与通知凭证）
 from common.logger import setup_logger
 from common.notify import Notifier
 from common.session import create_session

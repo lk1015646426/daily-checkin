@@ -43,6 +43,14 @@ class BaseSigner(ABC):
         if auth.get("cookies"):
             self.session.cookies.update(auth["cookies"])
 
+    def is_cached_auth_current(self, auth):
+        """缓存认证是否仍与当前外部凭证一致；子类可按需覆盖。"""
+        return True
+
+    def auth_expired_message(self):
+        """全新认证仍失效时返回给通知的安全提示。"""
+        return "登录后签到仍返回 401"
+
     def _result(self, res, cached=False):
         return {
             "site": self.site_name,
@@ -58,7 +66,7 @@ class BaseSigner(ABC):
 
     def run(self):
         auth = self.store.get(self.site_name, self.account.name)
-        if auth and not self.store.is_expired(auth):
+        if auth and not self.store.is_expired(auth) and self.is_cached_auth_current(auth):
             self.apply_auth(auth)
             try:
                 res = self.checkin(auth)
@@ -92,7 +100,7 @@ class BaseSigner(ABC):
             )
             if hasattr(self, "_cf_bypass"):
                 return self._cf_bypass()
-            return self._result({"ok": False, "msg": "登录后签到仍返回 401"})
+            return self._result({"ok": False, "msg": self.auth_expired_message()})
         except CloudflareBlocked:
             if hasattr(self, "_cf_bypass"):
                 return self._cf_bypass()
