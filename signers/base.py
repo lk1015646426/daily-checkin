@@ -33,12 +33,15 @@ class BaseSigner(ABC):
         raise NotImplementedError
 
     def apply_auth(self, auth):
-        """将缓存的登录态应用到请求会话（子类可重写，如 Playwright 场景）。"""
+        """将缓存的登录态应用到请求会话。
+
+        只应用 cookies（requests 按域隔离发送，安全）。
+        认证头（Authorization 等）一律不写入共享 session 的全局 headers，
+        由各 signer 在每次请求时通过 headers= 参数显式传递，
+        避免 A 站的认证头被发往 B 站服务器。
+        """
         if auth.get("cookies"):
             self.session.cookies.update(auth["cookies"])
-        uid = auth.get("user_id")
-        if uid:
-            self.session.headers["new-api-user"] = str(uid)
 
     def _result(self, res, cached=False):
         return {

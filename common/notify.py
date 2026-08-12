@@ -19,7 +19,11 @@ class Notifier:
             else:
                 self.logger.info("通知渠道为 none，跳过推送")
         except Exception as e:
-            self.logger.warning(f"通知发送失败: {e}")
+            # 注意：异常消息会包含完整请求 URL（TG bot token / Server酱 key 在 URL 中），
+            # 不能直接记录 {e}，否则密钥会写入日志。只记录异常类型。
+            self.logger.warning(
+                f"通知发送失败 ({self.channel}): {type(e).__name__}"
+            )
 
     def _tg(self, text):
         tg = self.cfg.get("telegram", {})

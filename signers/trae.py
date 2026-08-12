@@ -64,7 +64,19 @@ class TraeSigner(BaseSigner):
                     with open(captured_file, "r", encoding="utf-8") as f:
                         captured = json.load(f)
                     for uid, info in captured.items():
-                        if info.get("username") == self.account.name or uid == self.account.name:
+                        username = info.get("username", "") or ""
+                        # 配置里的账号名可能是手机号别名（前三位+末四位，如 1780293），
+                        # 这里同时按完整手机号、uid、别名三种方式匹配
+                        alias = (
+                            username[:3] + username[-4:]
+                            if len(username) >= 7
+                            else username
+                        )
+                        if (
+                            username == self.account.name
+                            or uid == self.account.name
+                            or alias == self.account.name
+                        ):
                             token = info.get("token")
                             if token:
                                 self.logger.info(
@@ -90,13 +102,8 @@ class TraeSigner(BaseSigner):
         }
 
     def apply_auth(self, auth):
-        """设置 Cloud-IDE-JWT 认证头和设备 ID 头。"""
-        token = auth.get("token")
-        if token:
-            self.session.headers["Authorization"] = f"Cloud-IDE-JWT {token}"
-        device_id = auth.get("device_id")
-        if device_id:
-            self.session.headers["x-device-id"] = device_id
+        """checkin 已按请求构造认证头（Cloud-IDE-JWT / x-device-id），
+        不写入共享 session 的全局 headers，避免跨站泄露。"""
 
     def checkin(self, auth):
         """调用签到 API 执行每日签到。"""

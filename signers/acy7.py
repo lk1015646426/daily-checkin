@@ -20,11 +20,23 @@ BROWSER_HEADERS = {
 class Acy7Signer(BaseSigner):
     type = "acy7"
 
+    @staticmethod
+    def _auth_headers(auth):
+        """按请求构造认证头（不写入共享 session 的全局 headers）。"""
+        headers = dict(BROWSER_HEADERS)
+        token = auth.get("token")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        uid = auth.get("user_id")
+        if uid:
+            headers["new-api-user"] = str(uid)
+        return headers
+
     def login(self):
         base = self.site.base_url.rstrip("/")
         s = self.session
         s.cookies.clear()
-        # 清除可能残留的旧认证头
+        # 清除可能残留的旧认证头（防御性清理，正常流程已不再写 session 全局头）
         s.headers.pop("Authorization", None)
         s.headers.pop("new-api-user", None)
 
@@ -80,24 +92,20 @@ class Acy7Signer(BaseSigner):
                 f"登录成功但未获取到 access_token, 响应: {resp.text[:300]}"
             )
 
-        # 设置 Bearer token 认证头
-        s.headers["Authorization"] = f"Bearer {access_token}"
-
         # 获取 user_id（新版需要 Bearer token 才能访问 /api/user/self）
+        auth_headers = self._auth_headers({"token": access_token})
         user_id = None
         if isinstance(d, dict):
             user_id = d.get("id")
         if not user_id:
             try:
-                r = s.get(f"{base}/api/user/self", headers=BROWSER_HEADERS, timeout=30)
+                r = s.get(f"{base}/api/user/self", headers=auth_headers, timeout=30)
                 if r.status_code == 200:
                     j = r.json()
                     if j.get("success"):
                         user_id = (j.get("data") or {}).get("id")
             except Exception as e:
                 self.logger.warning(f"acy7/{self.account.name} 查询 user_id 失败: {e}")
-        if user_id:
-            s.headers["new-api-user"] = str(user_id)
 
         self.logger.info(
             f"acy7/{self.account.name} 登录成功, "
@@ -112,21 +120,16 @@ class Acy7Signer(BaseSigner):
         }
 
     def apply_auth(self, auth):
-        """从缓存恢复 Bearer token 认证。"""
-        token = auth.get("token")
-        if token:
-            self.session.headers["Authorization"] = f"Bearer {token}"
-        uid = auth.get("user_id")
-        if uid:
-            self.session.headers["new-api-user"] = str(uid)
+        """认证头改为按请求传递（见 _auth_headers），这里无需操作共享 session。"""
 
     def checkin(self, auth):
         base = self.site.base_url.rstrip("/")
         s = self.session
+        headers = self._auth_headers(auth)
         try:
             resp = s.post(
                 f"{base}/api/user/checkin",
-                headers=BROWSER_HEADERS,
+                headers=headers,
                 timeout=30,
             )
         except Exception as e:
@@ -142,7 +145,7 @@ class Acy7Signer(BaseSigner):
         if resp.status_code == 200 and data.get("success"):
             d = data.get("data", {}) or {}
             awarded = d.get("quota_awarded") or 0
-            total_quota = self._get_quota()
+            total_quota = self._get_quota(headers)
             total_usd = round(total_quota / 500000, 2) if total_quota else 0
             awarded_usd = round(awarded / 500000, 2) if awarded else 0
             return {
@@ -154,7 +157,7 @@ class Acy7Signer(BaseSigner):
             }
         msg = data.get("message", "") or ""
         if "已签到" in msg or "already" in msg.lower() or "今日" in msg:
-            total_quota = self._get_quota()
+            total_quota = self._get_quota(headers)
             total_usd = round(total_quota / 500000, 2) if total_quota else 0
             return {
                 "ok": True,
@@ -165,12 +168,12 @@ class Acy7Signer(BaseSigner):
             }
         return {"ok": False, "points": 0, "msg": msg or "签到失败"}
 
-    def _get_quota(self):
+    def _get_quota(self, headers):
         """查询账户当前总额度（quota）。"""
         base = self.site.base_url.rstrip("/")
         s = self.session
         try:
-            r = s.get(f"{base}/api/user/self", headers=BROWSER_HEADERS, timeout=30)
+            r = s.get(f"{base}/api/user/self", headers=headers, timeout=30)
             if r.status_code == 200:
                 j = r.json()
                 if j.get("success"):

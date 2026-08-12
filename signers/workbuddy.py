@@ -84,16 +84,23 @@ class WorkBuddySigner(BaseSigner):
         }
 
     def apply_auth(self, auth):
-        """设置 Bearer token 认证头。"""
+        """认证头改为按请求传递（见 _auth_headers），这里无需操作共享 session。"""
+
+    @staticmethod
+    def _auth_headers(auth):
+        """按请求构造认证头（不写入共享 session 的全局 headers）。"""
+        headers = dict(API_HEADERS)
         token = auth.get("token")
         if token:
-            self.session.headers["Authorization"] = f"Bearer {token}"
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
 
     def checkin(self, auth):
         """调用签到 API 执行每日签到，并查询账号实际余额。"""
         s = self.session
+        headers = self._auth_headers(auth)
         try:
-            resp = s.post(CHECKIN_URL, json={}, headers=API_HEADERS, timeout=30)
+            resp = s.post(CHECKIN_URL, json={}, headers=headers, timeout=30)
         except Exception as e:
             raise RuntimeError(f"签到请求失败: {e}")
 
@@ -111,8 +118,8 @@ class WorkBuddySigner(BaseSigner):
         msg = data.get("msg", "")
 
         # 签到后查询签到活动状态（连续天数、本次获得）和账号实际余额
-        activity = self._get_activity_status()
-        total_credits = self._get_total_credits()
+        activity = self._get_activity_status(headers)
+        total_credits = self._get_total_credits(headers)
 
         today_credit = activity.get("today_credit", 0) if activity else 0
         streak = activity.get("streak_days", 0) if activity else 0
@@ -143,11 +150,11 @@ class WorkBuddySigner(BaseSigner):
 
         return {"ok": False, "points": 0, "msg": msg or f"签到失败 (code={code})"}
 
-    def _get_activity_status(self):
+    def _get_activity_status(self, headers):
         """查询签到活动状态（连续天数、本次获得积分等）。"""
         s = self.session
         try:
-            resp = s.post(STATUS_URL, json={}, headers=API_HEADERS, timeout=30)
+            resp = s.post(STATUS_URL, json={}, headers=headers, timeout=30)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("code") == 0:
@@ -156,7 +163,7 @@ class WorkBuddySigner(BaseSigner):
             self.logger.warning(f"WorkBuddy/{self.account.name} 查询签到状态失败: {e}")
         return {}
 
-    def _get_total_credits(self):
+    def _get_total_credits(self, headers):
         """查询账号实际可用积分余额（有效裂变包的剩余之和）。
 
         资源包分两类：
@@ -167,7 +174,7 @@ class WorkBuddySigner(BaseSigner):
         """
         s = self.session
         try:
-            resp = s.post(RESOURCE_URL, json={}, headers=API_HEADERS, timeout=30)
+            resp = s.post(RESOURCE_URL, json={}, headers=headers, timeout=30)
             if resp.status_code == 200:
                 data = resp.json()
                 accounts = (

@@ -35,9 +35,9 @@ sites:
       #   %LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info
       #   取其中 auth.accessToken 的值，填入对应 Secrets。
       # token 有效期约 1 年，过期需重新登录客户端提取。
-      - name: 17859510293
+      - name: 1780293
         token_env: WB1_TOKEN
-      - name: 19235970293
+      - name: 1920293
         token_env: WB2_TOKEN
 
   trae:
@@ -56,7 +56,7 @@ sites:
       # refresh_token 有效期 14 天，过期需重新登录客户端提取。
       # device_id 从 storage.json 的 telemetry.devDeviceId 字段获取，
       # 填入 TRAE_DEVICE_ID Secret（所有账号共用）。
-      - name: 17859510293
+      - name: 1780293
         token_env: TRAE1_TOKEN
-      - name: 19235970293
+      - name: 1920293
         token_env: TRAE2_TOKEN
