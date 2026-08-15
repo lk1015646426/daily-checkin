@@ -55,3 +55,7 @@ sites:
       - name: "1920293"
         token_env: TRAE2_TOKEN
         device_env: TRAE2_DEVICE_ID
+      # 第三个账号（切换工具槽位 3）。name 仅用于通知显示，可改成手机号。
+      - name: "账号3"
+        token_env: TRAE3_TOKEN
+        device_env: TRAE3_DEVICE_ID

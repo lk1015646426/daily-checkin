@@ -40,3 +40,15 @@ test_checkin.py
 test_direct_token.py
 test_exchange.py
 test_trae_checkin.py
+
+# 本地 TRAE Secret 同步工具（含解密/本地凭证读取能力，不上传）
+sync_trae_tokens.py
+sync_trae_tokens.pyw
+启动TRAE同步工具.bat
+TRAE双账号同步工具.lnk
+sync_error.log
+
+# 本地 TRAE 认证数据/刷新工具（含真实凭证，绝不上传）
+trae_accounts.json
+auto_trae_refresh.py
+HANDOFF_TRAE_TOKEN_REFRESH.md

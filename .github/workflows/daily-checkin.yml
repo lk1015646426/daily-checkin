@@ -47,6 +47,8 @@ jobs:
           TRAE1_DEVICE_ID: ${{ secrets.TRAE1_DEVICE_ID }}
           TRAE2_TOKEN: ${{ secrets.TRAE2_TOKEN }}
           TRAE2_DEVICE_ID: ${{ secrets.TRAE2_DEVICE_ID }}
+          TRAE3_TOKEN: ${{ secrets.TRAE3_TOKEN }}
+          TRAE3_DEVICE_ID: ${{ secrets.TRAE3_DEVICE_ID }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}

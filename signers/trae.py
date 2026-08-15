@@ -159,33 +159,52 @@ class TraeSigner(BaseSigner):
 
     @staticmethod
     def _parse_credits_usage(data):
-        """按 TRAE 官方客户端算法汇总积分包用量。"""
+        """按 TRAE 官方客户端算法汇总积分包用量。
+
+        与切换工具 parse_work_cn_credits_from_usage 保持一致（2026-08 修正版）：
+        1. 跳过 is_hide == true 的隐藏包；
+        2. 跳过显式停用包（is_active == false 或 status 为
+           inactive/disabled/expired 字符串）；status==0 的数值型有效包不跳过；
+        3. 没有 credits_limit 的包直接忽略（不能按 0 计）；
+        4. credits_limit == -1 视为无限包，其用量不计入 used；
+        5. 有限包：总量与用量分别累加，remaining = max(总量 - 总用量, 0)。
+        """
         packs = data.get("user_entitlement_pack_list") or []
         if not packs:
             return None
 
         limit = 0
         used = 0
-        remaining = 0
         unlimited = False
         has_credits_quota = False
 
         for pack in packs:
+            if pack.get("is_hide") is True:
+                continue
+            if pack.get("is_active") is False:
+                continue
+            status = pack.get("status")
+            if isinstance(status, str) and status.lower() in (
+                "inactive",
+                "disabled",
+                "expired",
+            ):
+                continue
+
             base_info = pack.get("entitlement_base_info") or {}
             quota = base_info.get("quota") or {}
             usage = pack.get("usage") or {}
             credits_limit = quota.get("credits_limit")
             credits_amount = usage.get("credits_amount", 0) or 0
 
-            if credits_limit == -1:
-                has_credits_quota = True
-                unlimited = True
-            elif isinstance(credits_limit, (int, float)) and credits_limit > 0:
-                has_credits_quota = True
-                limit += credits_limit
-                remaining += max(credits_limit - credits_amount, 0)
+            if not isinstance(credits_limit, (int, float)):
+                continue
 
-            if isinstance(credits_limit, (int, float)) and credits_limit != 0:
+            has_credits_quota = True
+            if credits_limit == -1:
+                unlimited = True
+            else:
+                limit += credits_limit
                 used += credits_amount
 
         if not has_credits_quota:
@@ -194,7 +213,7 @@ class TraeSigner(BaseSigner):
         return {
             "limit": math.inf if unlimited else limit,
             "used": used,
-            "remaining": math.inf if unlimited else remaining,
+            "remaining": math.inf if unlimited else max(limit - used, 0),
             "is_credits_billing": data.get("is_credits_billing") is True,
         }
 

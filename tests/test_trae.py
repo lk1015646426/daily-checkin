@@ -227,7 +227,83 @@ class TraeCreditsTests(TraeTestBase):
 
         self.assertTrue(math.isinf(usage["limit"]))
         self.assertTrue(math.isinf(usage["remaining"]))
-        self.assertEqual(25, usage["used"])
+        # 无限包的用量不计入 used（与切换工具口径一致）
+        self.assertEqual(0, usage["used"])
+
+    def test_parse_credits_usage_uses_total_minus_used_not_per_pack_floor(self):
+        """超支包场景：官方口径是总量-总用量，不是每包各自封顶再相加。"""
+        usage = TraeSigner._parse_credits_usage(
+            {
+                "user_entitlement_pack_list": [
+                    {
+                        "entitlement_base_info": {
+                            "quota": {"credits_limit": 100}
+                        },
+                        "usage": {"credits_amount": 150},
+                    },
+                    {
+                        "entitlement_base_info": {
+                            "quota": {"credits_limit": 1000}
+                        },
+                        "usage": {"credits_amount": 250},
+                    },
+                ]
+            }
+        )
+
+        self.assertEqual(1100, usage["limit"])
+        self.assertEqual(400, usage["used"])
+        self.assertEqual(700, usage["remaining"])
+
+    def test_parse_credits_usage_skips_hidden_and_counts_status_zero_packs(self):
+        """隐藏包跳过；status==0（数值）的有效积分包必须计入。"""
+        usage = TraeSigner._parse_credits_usage(
+            {
+                "user_entitlement_pack_list": [
+                    {
+                        "is_hide": True,
+                        "entitlement_base_info": {
+                            "quota": {"credits_limit": 999}
+                        },
+                        "usage": {"credits_amount": 1},
+                    },
+                    {
+                        "status": 0,
+                        "entitlement_base_info": {
+                            "quota": {"credits_limit": 2000}
+                        },
+                        "usage": {"credits_amount": 100},
+                    },
+                    {
+                        "entitlement_base_info": {
+                            "quota": {"credits_limit": 2000}
+                        },
+                        "usage": {"credits_amount": 300},
+                    },
+                ]
+            }
+        )
+
+        self.assertEqual(4000, usage["limit"])
+        self.assertEqual(400, usage["used"])
+        self.assertEqual(3600, usage["remaining"])
+
+    def test_parse_credits_usage_supports_decimal_quota(self):
+        """credits_amount/credits_limit 带小数时按浮点计算。"""
+        usage = TraeSigner._parse_credits_usage(
+            {
+                "user_entitlement_pack_list": [
+                    {
+                        "entitlement_base_info": {
+                            "quota": {"credits_limit": 2000.5}
+                        },
+                        "usage": {"credits_amount": 864.63},
+                    }
+                ]
+            }
+        )
+
+        self.assertAlmostEqual(1135.87, usage["remaining"], places=6)
 
     def test_checkin_claims_then_returns_daily_award_and_current_balance(self):
         session = QueueSession(
@@ -326,6 +402,11 @@ class TraeDeploymentTests(TraeTestBase):
                     "token_env": "TRAE2_TOKEN",
                     "device_env": "TRAE2_DEVICE_ID",
                 },
+                {
+                    "name": "账号3",
+                    "token_env": "TRAE3_TOKEN",
+                    "device_env": "TRAE3_DEVICE_ID",
+                },
             ],
             accounts,
         )
@@ -340,6 +421,8 @@ class TraeDeploymentTests(TraeTestBase):
         self.assertIn("TRAE1_DEVICE_ID: ${{ secrets.TRAE1_DEVICE_ID }}", workflow)
         self.assertIn("TRAE2_TOKEN: ${{ secrets.TRAE2_TOKEN }}", workflow)
         self.assertIn("TRAE2_DEVICE_ID: ${{ secrets.TRAE2_DEVICE_ID }}", workflow)
+        self.assertIn("TRAE3_TOKEN: ${{ secrets.TRAE3_TOKEN }}", workflow)
+        self.assertIn("TRAE3_DEVICE_ID: ${{ secrets.TRAE3_DEVICE_ID }}", workflow)
         self.assertNotIn("TRAE_DEVICE_ID: ${{ secrets.TRAE_DEVICE_ID }}", workflow)
         self.assertIn("key: signin-token-cache-v2-${{ github.run_id }}", workflow)
         self.assertIn("restore-keys: |", workflow)
