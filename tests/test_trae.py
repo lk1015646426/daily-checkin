@@ -403,9 +403,14 @@ class TraeDeploymentTests(TraeTestBase):
                     "device_env": "TRAE2_DEVICE_ID",
                 },
                 {
-                    "name": "账号3",
+                    "name": "刘浩17721",
                     "token_env": "TRAE3_TOKEN",
                     "device_env": "TRAE3_DEVICE_ID",
+                },
+                {
+                    "name": "1807095",
+                    "token_env": "TRAE4_TOKEN",
+                    "device_env": "TRAE4_DEVICE_ID",
                 },
             ],
             accounts,
@@ -495,6 +500,34 @@ class HardeningTests(TraeTestBase):
             result = signer.run()
 
         self.assertFalse(result["cached"])
+
+    def test_cached_business_failure_returns_without_relogin(self):
+        """业务失败（如"操作太过频繁"）不得触发重登重签，避免双倍请求。"""
+        calls = {"n": 0}
+
+        class OnceFailingSigner(TraeSigner):
+            def checkin(self, auth):
+                calls["n"] += 1
+                return {"ok": False, "points": 0, "msg": "签到失败: 操作太过频繁啦"}
+
+        account = Account(
+            name="1780293",
+            token_env="TRAE1_TOKEN",
+            device_env="TRAE1_DEVICE_ID",
+        )
+        store = MemoryStore({"token": "t", "device_id": "d", "expires_at": None})
+        signer = self.make_signer(account, store, OnceFailingSigner)
+
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": "t", "TRAE1_DEVICE_ID": "d"},
+            clear=False,
+        ):
+            result = signer.run()
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["cached"])
+        self.assertEqual(1, calls["n"])
 
     def test_missing_device_id_invalidates_cached_auth(self):
         account = Account(

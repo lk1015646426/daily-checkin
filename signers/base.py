@@ -70,8 +70,6 @@ class BaseSigner(ABC):
             self.apply_auth(auth)
             try:
                 res = self.checkin(auth)
-                if res.get("ok"):
-                    return self._result(res, cached=True)
             except AuthExpired:
                 self.logger.info(f"{self.site_name}/{self.account.name} 登录态失效，重新登录")
             except CloudflareBlocked:
@@ -80,6 +78,12 @@ class BaseSigner(ABC):
                 return self._result({"ok": False, "msg": "Cloudflare/WAF 拦截且未实现绕过"})
             except Exception as e:
                 self.logger.warning(f"{self.site_name}/{self.account.name} 复用时异常: {e}")
+            else:
+                # checkin 正常返回即代表服务器已给出明确应答（无论成败）。
+                # 业务失败（如"操作太过频繁"）时重登重签不会改变结果——
+                # 多数站点的 login 只是重读环境变量里的同一凭证——只会
+                # 重复请求、加重服务端风控，因此直接返回结果。
+                return self._result(res, cached=True)
         # 全新登录
         try:
             auth = self.login()
