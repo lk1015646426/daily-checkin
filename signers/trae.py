@@ -22,6 +22,43 @@ API_HEADERS = {
 }
 
 
+class TraeHttpError(RuntimeError):
+    """TRAE 非 2xx 响应；保留脱敏诊断所需的响应与业务数据。"""
+
+    def __init__(self, response, data=None):
+        self.response = response
+        self.data = data if isinstance(data, dict) else {}
+        super().__init__(f"TRAE 请求失败 (HTTP {response.status_code})")
+
+
+class TraeBusinessError(RuntimeError):
+    """TRAE HTTP 成功但业务响应或数据形状不可用。"""
+
+    def __init__(self, response, data, detail):
+        self.response = response
+        self.data = data if isinstance(data, dict) else {}
+        self.detail = detail
+        super().__init__(detail)
+
+
+class TraeProtocolError(TraeBusinessError):
+    """TRAE 返回了无法按接口契约解析的响应。"""
+
+
+class TraeTransportError(TraeBusinessError):
+    """TRAE 请求未获得 HTTP 响应。"""
+
+
+class TraeAuthError(AuthExpired):
+    """保留 HTTP/业务诊断信息的认证失效。"""
+
+    def __init__(self, response, data=None):
+        self.response = response
+        self.data = data if isinstance(data, dict) else {}
+        self.detail = "认证失败"
+        super().__init__(self.detail)
+
+
 class TraeSigner(BaseSigner):
     type = "trae"
 
@@ -157,6 +194,30 @@ class TraeSigner(BaseSigner):
             "x-device-id": auth.get("device_id", ""),
         }
 
+    @classmethod
+    def _token_expiry_state(cls, token):
+        expiry = cls._jwt_expiry(token or "")
+        if expiry is None:
+            return "unknown"
+        return "expired" if expiry <= time.time() else "valid"
+
+    def _diagnostic(
+        self,
+        auth,
+        stage,
+        data=None,
+        response=None,
+        claim_attempted=False,
+    ):
+        return {
+            "stage": stage,
+            "business_code": (data or {}).get("code"),
+            "http_status": response.status_code if response is not None else None,
+            "claim_attempted": claim_attempted,
+            "token_expiry_state": self._token_expiry_state(auth.get("token")),
+            "device_present": bool(auth.get("device_id")),
+        }
+
     @staticmethod
     def _parse_credits_usage(data):
         """按 TRAE 官方客户端算法汇总积分包用量。
@@ -225,21 +286,56 @@ class TraeSigner(BaseSigner):
                 headers=headers,
                 timeout=30,
             )
-        except Exception as e:
-            raise RuntimeError(f"TRAE 请求失败: {e}") from e
-
-        if resp.status_code == 401:
-            raise AuthExpired()
-        if not 200 <= resp.status_code < 300:
-            raise RuntimeError(f"TRAE 请求失败 (HTTP {resp.status_code})")
+        except Exception:
+            raise TraeTransportError(None, {}, "网络请求失败") from None
 
         try:
             data = resp.json()
         except (json.JSONDecodeError, ValueError):
-            raise RuntimeError(
-                f"TRAE 返回非 JSON (HTTP {resp.status_code}): {resp.text[:200]}"
+            if resp.status_code == 401:
+                raise TraeAuthError(resp) from None
+            if not 200 <= resp.status_code < 300:
+                raise TraeHttpError(resp) from None
+            raise TraeProtocolError(
+                resp,
+                {},
+                f"返回非 JSON (HTTP {resp.status_code})",
+            ) from None
+        if resp.status_code == 401:
+            raise TraeAuthError(resp, data)
+        if not isinstance(data, dict):
+            if not 200 <= resp.status_code < 300:
+                raise TraeHttpError(resp)
+            raise TraeProtocolError(
+                resp,
+                {},
+                f"返回 JSON 顶层类型无效 (HTTP {resp.status_code})",
             )
+        if not 200 <= resp.status_code < 300:
+            raise TraeHttpError(resp, data)
         return resp, data
+
+    def _response_error_result(self, auth, stage, error, prefix, claim_attempted):
+        response = getattr(error, "response", None)
+        http_status = response.status_code if response is not None else None
+        detail = (
+            error.data.get("message")
+            or error.data.get("msg")
+            or getattr(error, "detail", None)
+            or (f"HTTP {http_status}" if http_status is not None else "请求失败")
+        )
+        return {
+            "ok": False,
+            "points": 0,
+            "msg": f"{prefix}: {detail}",
+            **self._diagnostic(
+                auth,
+                stage,
+                data=error.data,
+                response=response,
+                claim_attempted=claim_attempted,
+            ),
+        }
 
     @staticmethod
     def _business_error(data):
@@ -252,24 +348,46 @@ class TraeSigner(BaseSigner):
         return data.get("message") or data.get("msg") or f"code={code}"
 
     def _get_credits_usage(self, base, headers):
-        _, data = self._post_json(
+        response, data = self._post_json(
             f"{base}/trae/api/v2/pay/ide_user_ent_usage",
             headers,
             {"require_usage": True},
         )
+        if data.get("code") == 1001:
+            raise TraeAuthError(response, data)
         error = self._business_error(data)
         if error:
-            raise RuntimeError(f"查询积分余额失败: {error}")
+            raise TraeBusinessError(response, data, error)
 
         # 兼容接口将业务数据包在 data 字段内的情况。
         payload = data.get("data") if isinstance(data.get("data"), dict) else data
         usage = self._parse_credits_usage(payload)
         if usage is None:
-            raise RuntimeError("查询积分余额失败: 返回中没有可用积分包")
+            raise TraeBusinessError(response, data, "返回中没有可用积分包")
         return usage
 
-    def _success_result(self, base, headers, credits, action):
-        usage = self._get_credits_usage(base, headers)
+    def _success_result(
+        self,
+        base,
+        headers,
+        auth,
+        credits,
+        action,
+        stage,
+        data,
+        response,
+        claim_attempted,
+    ):
+        try:
+            usage = self._get_credits_usage(base, headers)
+        except (TraeHttpError, TraeBusinessError, TraeAuthError) as error:
+            return self._response_error_result(
+                auth,
+                "usage",
+                error,
+                "查询积分余额失败",
+                claim_attempted,
+            )
         balance = usage["remaining"]
         balance_text = "无限" if math.isinf(balance) else f"{balance:g}"
         return {
@@ -278,6 +396,13 @@ class TraeSigner(BaseSigner):
             "points_unit": "积分",
             "awarded": credits,
             "msg": f"{action} +{credits}积分，余额{balance_text}积分",
+            **self._diagnostic(
+                auth,
+                stage,
+                data=data,
+                response=response,
+                claim_attempted=claim_attempted,
+            ),
         }
 
     def checkin(self, auth):
@@ -285,35 +410,116 @@ class TraeSigner(BaseSigner):
         base = (self.site.base_url or DEFAULT_BASE_URL).rstrip("/")
         headers = self._headers(auth)
 
-        _, status_data = self._post_json(
-            f"{base}/trae/api/v2/ug/checkin_credits/status",
-            headers,
-            {},
-        )
+        try:
+            status_response, status_data = self._post_json(
+                f"{base}/trae/api/v2/ug/checkin_credits/status",
+                headers,
+                {},
+            )
+        except (TraeHttpError, TraeBusinessError) as error:
+            return self._response_error_result(
+                auth,
+                "status",
+                error,
+                "查询签到状态失败",
+                False,
+            )
         error = self._business_error(status_data)
         if error:
-            return {"ok": False, "points": 0, "msg": f"查询签到状态失败: {error}"}
+            return {
+                "ok": False,
+                "points": 0,
+                "msg": f"查询签到状态失败: {error}",
+                **self._diagnostic(
+                    auth,
+                    "status",
+                    data=status_data,
+                    response=status_response,
+                    claim_attempted=False,
+                ),
+            }
 
         checked_in = status_data.get("checked_in", False)
         credits = status_data.get("credits", 0) or 0
         enabled = status_data.get("enable", False)
 
         if not enabled:
-            return {"ok": False, "points": 0, "msg": "签到功能未开启"}
+            return {
+                "ok": False,
+                "points": 0,
+                "msg": "签到功能未开启",
+                **self._diagnostic(
+                    auth,
+                    "status",
+                    data=status_data,
+                    response=status_response,
+                    claim_attempted=False,
+                ),
+            }
 
         if checked_in:
-            return self._success_result(base, headers, credits, "今日已签到")
+            return self._success_result(
+                base,
+                headers,
+                auth,
+                credits,
+                "今日已签到（本次未发起领取）",
+                "status",
+                status_data,
+                status_response,
+                False,
+            )
 
-        _, claim_data = self._post_json(
-            f"{base}/trae/api/v2/ug/checkin_credits/claim",
-            headers,
-            {},
-        )
+        try:
+            claim_response, claim_data = self._post_json(
+                f"{base}/trae/api/v2/ug/checkin_credits/claim",
+                headers,
+                {},
+            )
+        except (TraeHttpError, TraeBusinessError) as error:
+            return self._response_error_result(
+                auth,
+                "claim",
+                error,
+                "签到失败",
+                True,
+            )
         claim_error = self._business_error(claim_data)
         if not claim_error:
-            return self._success_result(base, headers, credits, "签到成功")
+            return self._success_result(
+                base,
+                headers,
+                auth,
+                credits,
+                "本次领取成功",
+                "claim",
+                claim_data,
+                claim_response,
+                True,
+            )
 
         if "已签到" in claim_error or "already" in claim_error.lower():
-            return self._success_result(base, headers, credits, "今日已签到")
+            return self._success_result(
+                base,
+                headers,
+                auth,
+                credits,
+                "今日已签到（领取接口确认）",
+                "claim",
+                claim_data,
+                claim_response,
+                True,
+            )
 
-        return {"ok": False, "points": 0, "msg": f"签到失败: {claim_error}"}
+        return {
+            "ok": False,
+            "points": 0,
+            "msg": f"签到失败: {claim_error}",
+            **self._diagnostic(
+                auth,
+                "claim",
+                data=claim_data,
+                response=claim_response,
+                claim_attempted=True,
+            ),
+        }

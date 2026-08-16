@@ -25,6 +25,33 @@ SIGNERS = {
 }
 
 
+def parse_account_filter(value):
+    """解析可选的 `站点:账号名` 筛选条件。"""
+    if value is None or not value.strip():
+        return None
+    site, separator, account = value.partition(":")
+    site = site.strip()
+    account = account.strip()
+    if not separator or not site or not account:
+        raise ValueError("账号筛选格式应为 站点:账号名")
+    return site, account
+
+
+def _diagnostic_suffix(result):
+    fields = []
+    for key in (
+        "stage",
+        "business_code",
+        "http_status",
+        "claim_attempted",
+        "token_expiry_state",
+        "device_present",
+    ):
+        if key in result:
+            fields.append(f"{key}={result.get(key)}")
+    return f" [{', '.join(fields)}]" if fields else ""
+
+
 def main():
     logger = setup_logger()
     cfg = Config.load("config.yaml", logger)
@@ -32,13 +59,23 @@ def main():
     session = create_session()
     notifier = Notifier(cfg.get_notify(), logger)
 
+    try:
+        account_filter = parse_account_filter(os.environ.get("CHECKIN_ACCOUNT_FILTER"))
+    except ValueError as exc:
+        logger.error(str(exc))
+        sys.exit(1)
+
     results = []
+    matched_accounts = 0
     for site in cfg.sites():
         signer_cls = SIGNERS.get(site.type)
         if not signer_cls:
             logger.warning(f"未知站点类型: {site.type}，已跳过")
             continue
         for account in site.accounts:
+            if account_filter and account_filter != (site.key, account.name):
+                continue
+            matched_accounts += 1
             try:
                 signer = signer_cls(site, account, session, store, logger, notifier)
                 res = signer.run()
@@ -53,9 +90,15 @@ def main():
                     "cached": False,
                 }
             logger.info(
-                f"{res['site']}/{res['account']}: {'成功' if res['ok'] else '失败'} - {res['msg']}"
+                f"{res['site']}/{res['account']}: {'成功' if res['ok'] else '失败'} - "
+                f"{res['msg']}{_diagnostic_suffix(res)}"
             )
             results.append(res)
+
+    if account_filter and matched_accounts == 0:
+        site_name, account_name = account_filter
+        logger.error(f"未找到筛选账号: {site_name}/{account_name}")
+        sys.exit(1)
 
     summary = Notifier.format_summary(results)
     logger.info("\n" + summary)

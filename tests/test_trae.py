@@ -10,6 +10,7 @@ import yaml
 from unittest.mock import Mock, patch
 
 from common.config import Account, Site
+from main import parse_account_filter
 from signers.base import AuthExpired
 from signers.trae import TraeSigner
 
@@ -49,6 +50,15 @@ class FakeResponse:
         return self.payload
 
 
+class NonJsonResponse(FakeResponse):
+    def __init__(self, text, status_code=200):
+        super().__init__({}, status_code=status_code)
+        self.text = text
+
+    def json(self):
+        raise ValueError("not json")
+
+
 class QueueSession:
     def __init__(self, responses):
         self.responses = list(responses)
@@ -59,6 +69,16 @@ class QueueSession:
         if not self.responses:
             raise AssertionError(f"没有为请求准备响应: {url}")
         return self.responses.pop(0)
+
+
+class FailingSession:
+    def __init__(self, error_message):
+        self.error_message = error_message
+        self.calls = []
+
+    def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        raise RuntimeError(self.error_message)
 
 
 class ProbeTraeSigner(TraeSigner):
@@ -185,6 +205,32 @@ class TraeAuthenticationTests(TraeTestBase):
 
 
 class TraeCreditsTests(TraeTestBase):
+    def test_claim_business_failure_keeps_stage_code_and_does_not_retry(self):
+        token = make_jwt(int(time.time()) + 3600)
+        session = QueueSession(
+            [
+                FakeResponse(
+                    {"code": 0, "checked_in": False, "credits": 200, "enable": True}
+                ),
+                FakeResponse(
+                    {"code": 500, "message": "操作太过频繁啦，请稍后尝试"}
+                ),
+            ]
+        )
+        signer = self.make_signer(session=session)
+
+        result = signer.checkin({"token": token, "device_id": "secret-device"})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("claim", result["stage"])
+        self.assertEqual(500, result["business_code"])
+        self.assertEqual(200, result["http_status"])
+        self.assertTrue(result["claim_attempted"])
+        self.assertEqual("valid", result["token_expiry_state"])
+        self.assertTrue(result["device_present"])
+        self.assertNotIn(token, repr(result))
+        self.assertNotIn("secret-device", repr(result))
+
     def test_parse_credits_usage_sums_remaining_finite_packs(self):
         usage = TraeSigner._parse_credits_usage(
             {
@@ -371,7 +417,7 @@ class TraeCreditsTests(TraeTestBase):
         self.assertEqual(2, len(session.calls))
         self.assertFalse(any(url.endswith("/claim") for url, _ in session.calls))
 
-    def test_balance_endpoint_401_expires_authentication(self):
+    def test_balance_endpoint_401_keeps_usage_stage(self):
         session = QueueSession(
             [
                 FakeResponse(
@@ -382,10 +428,24 @@ class TraeCreditsTests(TraeTestBase):
         )
         signer = self.make_signer(session=session)
 
-        with self.assertRaises(AuthExpired):
-            signer.checkin({"token": "token", "device_id": "device-1"})
+        result = signer.checkin({"token": "token", "device_id": "device-1"})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("usage", result["stage"])
+        self.assertEqual(401, result["http_status"])
+        self.assertFalse(result["claim_attempted"])
 
 class TraeDeploymentTests(TraeTestBase):
+    def test_account_filter_parses_site_and_name(self):
+        self.assertEqual(
+            ("trae", "刘浩17721"),
+            parse_account_filter("trae:刘浩17721"),
+        )
+
+    def test_account_filter_rejects_missing_separator(self):
+        with self.assertRaises(ValueError):
+            parse_account_filter("trae")
+
     def test_config_maps_each_trae_account_to_its_own_device_secret(self):
         config = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
         accounts = config["sites"]["trae"]["accounts"]
@@ -433,6 +493,16 @@ class TraeDeploymentTests(TraeTestBase):
         self.assertIn("restore-keys: |", workflow)
         self.assertIn("signin-token-cache-v2-", workflow)
 
+    def test_workflow_supports_single_account_and_concurrency(self):
+        workflow = Path(".github/workflows/daily-checkin.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("account_filter:", workflow)
+        self.assertIn("CHECKIN_ACCOUNT_FILTER:", workflow)
+        self.assertIn("concurrency:", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+
     def test_fresh_401_names_only_the_affected_account_secrets(self):
         session = QueueSession([FakeResponse({}, status_code=401)])
         store = MemoryStore()
@@ -476,6 +546,209 @@ class NotificationTests(unittest.TestCase):
         self.assertIn("余额 **无限积分**", summary)
         self.assertNotIn("inf积分", summary)
 class HardeningTests(TraeTestBase):
+    def test_status_network_failure_does_not_leak_error_or_relogin(self):
+        token = make_jwt(int(time.time()) + 3600)
+        transport_secret = "token=must-not-appear"
+        session = FailingSession(transport_secret)
+        store = MemoryStore(
+            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+        )
+        signer = self.make_signer(session=session, store=store)
+
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            clear=False,
+        ):
+            result = signer.run()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("status", result["stage"])
+        self.assertIsNone(result["http_status"])
+        self.assertNotIn(transport_secret, repr(result))
+        self.assertEqual(1, len(session.calls))
+
+    def test_status_json_array_is_protocol_failure_without_relogin(self):
+        token = make_jwt(int(time.time()) + 3600)
+        session = QueueSession([FakeResponse([])])
+        store = MemoryStore(
+            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+        )
+        signer = self.make_signer(session=session, store=store)
+
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            clear=False,
+        ):
+            result = signer.run()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("status", result["stage"])
+        self.assertEqual(200, result["http_status"])
+        self.assertEqual(1, len(session.calls))
+
+    def test_status_non_json_response_does_not_leak_body_or_relogin(self):
+        token = make_jwt(int(time.time()) + 3600)
+        response_secret = "access_token=must-not-appear"
+        session = QueueSession([NonJsonResponse(response_secret)])
+        store = MemoryStore(
+            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+        )
+        signer = self.make_signer(session=session, store=store)
+
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            clear=False,
+        ):
+            result = signer.run()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("status", result["stage"])
+        self.assertEqual(200, result["http_status"])
+        self.assertNotIn(response_secret, repr(result))
+        self.assertEqual(1, len(session.calls))
+
+    def test_status_http_503_keeps_stage_and_does_not_relogin(self):
+        token = make_jwt(int(time.time()) + 3600)
+        session = QueueSession(
+            [FakeResponse({"message": "service unavailable"}, status_code=503)]
+        )
+        store = MemoryStore(
+            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+        )
+        signer = self.make_signer(session=session, store=store)
+
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            clear=False,
+        ):
+            result = signer.run()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("status", result["stage"])
+        self.assertEqual(503, result["http_status"])
+        self.assertFalse(result["claim_attempted"])
+        self.assertEqual(1, len(session.calls))
+
+    def test_claim_http_429_keeps_stage_and_does_not_relogin(self):
+        token = make_jwt(int(time.time()) + 3600)
+        session = QueueSession(
+            [
+                FakeResponse(
+                    {"code": 0, "checked_in": False, "credits": 200, "enable": True}
+                ),
+                FakeResponse(
+                    {"code": 429, "message": "操作太过频繁啦，请稍后尝试"},
+                    status_code=429,
+                ),
+            ]
+        )
+        store = MemoryStore(
+            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+        )
+        signer = self.make_signer(session=session, store=store)
+
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            clear=False,
+        ):
+            result = signer.run()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("claim", result["stage"])
+        self.assertEqual(429, result["http_status"])
+        self.assertTrue(result["claim_attempted"])
+        self.assertEqual(2, len(session.calls))
+
+    def test_usage_http_503_keeps_stage_and_does_not_relogin(self):
+        token = make_jwt(int(time.time()) + 3600)
+        session = QueueSession(
+            [
+                FakeResponse(
+                    {"code": 0, "checked_in": True, "credits": 200, "enable": True}
+                ),
+                FakeResponse({"message": "service unavailable"}, status_code=503),
+            ]
+        )
+        store = MemoryStore(
+            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+        )
+        signer = self.make_signer(session=session, store=store)
+
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            clear=False,
+        ):
+            result = signer.run()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("usage", result["stage"])
+        self.assertEqual(503, result["http_status"])
+        self.assertFalse(result["claim_attempted"])
+        self.assertEqual(2, len(session.calls))
+
+    def test_usage_business_failure_keeps_stage_and_does_not_relogin(self):
+        token = make_jwt(int(time.time()) + 3600)
+        session = QueueSession(
+            [
+                FakeResponse(
+                    {"code": 0, "checked_in": True, "credits": 200, "enable": True}
+                ),
+                FakeResponse({"code": 500, "message": "积分服务暂不可用"}),
+            ]
+        )
+        store = MemoryStore(
+            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+        )
+        signer = self.make_signer(session=session, store=store)
+
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            clear=False,
+        ):
+            result = signer.run()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("usage", result["stage"])
+        self.assertEqual(500, result["business_code"])
+        self.assertEqual(200, result["http_status"])
+        self.assertFalse(result["claim_attempted"])
+        self.assertEqual(2, len(session.calls))
+
+    def test_usage_token_invalid_business_code_does_not_relogin(self):
+        token = make_jwt(int(time.time()) + 3600)
+        session = QueueSession(
+            [
+                FakeResponse(
+                    {"code": 0, "checked_in": True, "credits": 200, "enable": True}
+                ),
+                FakeResponse({"code": 1001, "message": "token invalid"}),
+            ]
+        )
+        store = MemoryStore(
+            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+        )
+        signer = self.make_signer(session=session, store=store)
+
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            clear=False,
+        ):
+            result = signer.run()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("usage", result["stage"])
+        self.assertEqual(1001, result["business_code"])
+        self.assertEqual(200, result["http_status"])
+        self.assertEqual(2, len(session.calls))
+
     def test_expired_cached_jwt_is_not_reused(self):
         expired_token = make_jwt(int(time.time()) - 60)
         account = Account(
@@ -552,8 +825,13 @@ class HardeningTests(TraeTestBase):
         session = QueueSession([FakeResponse({"code": 0}, status_code=500)])
         signer = self.make_signer(session=session)
 
-        with self.assertRaisesRegex(RuntimeError, "HTTP 500"):
-            signer.checkin({"token": "token", "device_id": "device-1"})
+        result = signer.checkin({"token": "token", "device_id": "device-1"})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("status", result["stage"])
+        self.assertEqual(0, result["business_code"])
+        self.assertEqual(500, result["http_status"])
+        self.assertFalse(result["claim_attempted"])
 
     def test_invalid_jwt_expiry_is_ignored_without_crashing(self):
         self.assertIsNone(TraeSigner._jwt_expiry("not-a-valid-jwt"))
@@ -608,4 +886,3 @@ class HardeningTests(TraeTestBase):
         self.assertNotIn("trae 1780293", summary)
 if __name__ == "__main__":
     unittest.main()
-

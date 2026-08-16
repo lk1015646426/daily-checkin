@@ -52,7 +52,7 @@ class BaseSigner(ABC):
         return "登录后签到仍返回 401"
 
     def _result(self, res, cached=False):
-        return {
+        result = {
             "site": self.site_name,
             "account": self.account.name,
             "ok": res.get("ok", False),
@@ -63,6 +63,17 @@ class BaseSigner(ABC):
             "msg": res.get("msg", ""),
             "cached": cached,
         }
+        for key in (
+            "stage",
+            "business_code",
+            "http_status",
+            "claim_attempted",
+            "token_expiry_state",
+            "device_present",
+        ):
+            if key in res:
+                result[key] = res.get(key)
+        return result
 
     def run(self):
         auth = self.store.get(self.site_name, self.account.name)
