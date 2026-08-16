@@ -47,19 +47,33 @@ sites:
     # 签到 API 直接调用 api.trae.cn，每个账号必须使用自己的 token 和设备 ID。
     base_url: https://api.trae.cn
     accounts:
-      # refresh token 和 telemetry.devDeviceId 均从对应账号已登录的客户端获取。
+      # token、数字 auth_device_id 和设备上下文均由切换工具从官方客户端快照同步。
       # 两个账号的认证信息不可混用，否则可能返回 401。
       - name: "1780293"
-        token_env: TRAE1_TOKEN
-        device_env: TRAE1_DEVICE_ID
+        token_env: A_1780293_TOKEN
+        device_env: A_1780293_DEVICE_ID
+        device_brand_env: A_1780293_DEVICE_BRAND
+        device_type_env: A_1780293_DEVICE_TYPE
       - name: "1920293"
-        token_env: TRAE2_TOKEN
-        device_env: TRAE2_DEVICE_ID
+        token_env: A_1920293_TOKEN
+        device_env: A_1920293_DEVICE_ID
+        device_brand_env: A_1920293_DEVICE_BRAND
+        device_type_env: A_1920293_DEVICE_TYPE
       # 槽位 3：刘浩17721。name 与切换工具账号备注一致，仅用于通知显示。
       - name: "刘浩17721"
-        token_env: TRAE3_TOKEN
-        device_env: TRAE3_DEVICE_ID
+        token_env: A_17721_TOKEN
+        device_env: A_17721_DEVICE_ID
+        device_brand_env: A_17721_DEVICE_BRAND
+        device_type_env: A_17721_DEVICE_TYPE
       # 槽位 4：1807095。各账号 device_id 必须互不相同，否则服务端按同设备去重。
       - name: "1807095"
-        token_env: TRAE4_TOKEN
-        device_env: TRAE4_DEVICE_ID
+        token_env: A_1807095_TOKEN
+        device_env: A_1807095_DEVICE_ID
+        device_brand_env: A_1807095_DEVICE_BRAND
+        device_type_env: A_1807095_DEVICE_TYPE
+      # 槽位 5：新注册账号，切换工具显示名为“用户4028161677”。
+      - name: "用户4028161677"
+        token_env: A_4028161677_TOKEN
+        device_env: A_4028161677_DEVICE_ID
+        device_brand_env: A_4028161677_DEVICE_BRAND
+        device_type_env: A_4028161677_DEVICE_TYPE

@@ -127,6 +127,8 @@ class TraeAuthenticationTests(TraeTestBase):
             name="1780293",
             token_env="TRAE1_TOKEN",
             device_env="TRAE1_DEVICE_ID",
+            device_brand_env="TRAE1_DEVICE_BRAND",
+            device_type_env="TRAE1_DEVICE_TYPE",
         )
         signer = self.make_signer(account)
 
@@ -134,7 +136,9 @@ class TraeAuthenticationTests(TraeTestBase):
             os.environ,
             {
                 "TRAE1_TOKEN": token,
-                "TRAE1_DEVICE_ID": "device-for-account-1",
+                "TRAE1_DEVICE_ID": "1132918838145530",
+                "TRAE1_DEVICE_BRAND": "INVA",
+                "TRAE1_DEVICE_TYPE": "windows",
                 "TRAE_DEVICE_ID": "shared-device-must-not-be-used",
             },
             clear=False,
@@ -142,8 +146,46 @@ class TraeAuthenticationTests(TraeTestBase):
             auth = signer.login()
 
         self.assertEqual(token, auth["token"])
-        self.assertEqual("device-for-account-1", auth["device_id"])
+        self.assertEqual("1132918838145530", auth["device_id"])
+        self.assertEqual("INVA", auth["device_brand"])
+        self.assertEqual("windows", auth["device_type"])
         self.assertEqual(1_800_000_000, auth["expires_at"])
+
+    def test_login_rejects_uuid_device_id_without_fallback(self):
+        signer = self.make_signer()
+        with patch.dict(
+            os.environ,
+            {
+                "TRAE1_TOKEN": "opaque-token",
+                "TRAE1_DEVICE_ID": "d6b8ac2e-f4d1-496d-a9a6-c9c7b4bd23e3",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "数字设备 ID"):
+                signer.login()
+
+    def test_headers_include_optional_official_device_context_only_when_present(self):
+        signer = self.make_signer()
+
+        headers = signer._headers(
+            {
+                "token": "token",
+                "device_id": "1132918838145530",
+                "device_brand": "INVA",
+                "device_type": "windows",
+            }
+        )
+        self.assertEqual("1132918838145530", headers["x-device-id"])
+        self.assertEqual("INVA", headers["x-device-brand"])
+        self.assertEqual("windows", headers["x-device-type"])
+        self.assertNotIn("Origin", headers)
+        self.assertNotIn("Referer", headers)
+
+        headers_without_optional = signer._headers(
+            {"token": "token", "device_id": "1132918838145530"}
+        )
+        self.assertNotIn("x-device-brand", headers_without_optional)
+        self.assertNotIn("x-device-type", headers_without_optional)
 
     def test_run_replaces_cache_when_environment_token_changes(self):
         account = Account(
@@ -154,7 +196,7 @@ class TraeAuthenticationTests(TraeTestBase):
         store = MemoryStore(
             {
                 "token": "cached-old-token",
-                "device_id": "device-for-account-1",
+                "device_id": "1132918838145530",
                 "expires_at": None,
             }
         )
@@ -164,13 +206,13 @@ class TraeAuthenticationTests(TraeTestBase):
             os.environ,
             {
                 "TRAE1_TOKEN": "secret-new-token",
-                "TRAE1_DEVICE_ID": "device-for-account-1",
+                "TRAE1_DEVICE_ID": "1132918838145530",
             },
             clear=False,
         ):
             result = signer.run()
 
-        self.assertEqual("secret-new-token|device-for-account-1", result["msg"])
+        self.assertEqual("secret-new-token|1132918838145530", result["msg"])
         self.assertFalse(result["cached"])
         self.assertEqual("secret-new-token", store.auth["token"])
 
@@ -183,7 +225,7 @@ class TraeAuthenticationTests(TraeTestBase):
         store = MemoryStore(
             {
                 "token": "same-token",
-                "device_id": "wrong-account-device",
+                "device_id": "1132918838145530",
                 "expires_at": None,
             }
         )
@@ -193,15 +235,15 @@ class TraeAuthenticationTests(TraeTestBase):
             os.environ,
             {
                 "TRAE2_TOKEN": "same-token",
-                "TRAE2_DEVICE_ID": "device-for-account-2",
+                "TRAE2_DEVICE_ID": "2232918838145530",
             },
             clear=False,
         ):
             result = signer.run()
 
-        self.assertEqual("same-token|device-for-account-2", result["msg"])
+        self.assertEqual("same-token|2232918838145530", result["msg"])
         self.assertFalse(result["cached"])
-        self.assertEqual("device-for-account-2", store.auth["device_id"])
+        self.assertEqual("2232918838145530", store.auth["device_id"])
 
 
 class TraeCreditsTests(TraeTestBase):
@@ -454,23 +496,38 @@ class TraeDeploymentTests(TraeTestBase):
             [
                 {
                     "name": "1780293",
-                    "token_env": "TRAE1_TOKEN",
-                    "device_env": "TRAE1_DEVICE_ID",
+                    "token_env": "A_1780293_TOKEN",
+                    "device_env": "A_1780293_DEVICE_ID",
+                    "device_brand_env": "A_1780293_DEVICE_BRAND",
+                    "device_type_env": "A_1780293_DEVICE_TYPE",
                 },
                 {
                     "name": "1920293",
-                    "token_env": "TRAE2_TOKEN",
-                    "device_env": "TRAE2_DEVICE_ID",
+                    "token_env": "A_1920293_TOKEN",
+                    "device_env": "A_1920293_DEVICE_ID",
+                    "device_brand_env": "A_1920293_DEVICE_BRAND",
+                    "device_type_env": "A_1920293_DEVICE_TYPE",
                 },
                 {
                     "name": "刘浩17721",
-                    "token_env": "TRAE3_TOKEN",
-                    "device_env": "TRAE3_DEVICE_ID",
+                    "token_env": "A_17721_TOKEN",
+                    "device_env": "A_17721_DEVICE_ID",
+                    "device_brand_env": "A_17721_DEVICE_BRAND",
+                    "device_type_env": "A_17721_DEVICE_TYPE",
                 },
                 {
                     "name": "1807095",
-                    "token_env": "TRAE4_TOKEN",
-                    "device_env": "TRAE4_DEVICE_ID",
+                    "token_env": "A_1807095_TOKEN",
+                    "device_env": "A_1807095_DEVICE_ID",
+                    "device_brand_env": "A_1807095_DEVICE_BRAND",
+                    "device_type_env": "A_1807095_DEVICE_TYPE",
+                },
+                {
+                    "name": "用户4028161677",
+                    "token_env": "A_4028161677_TOKEN",
+                    "device_env": "A_4028161677_DEVICE_ID",
+                    "device_brand_env": "A_4028161677_DEVICE_BRAND",
+                    "device_type_env": "A_4028161677_DEVICE_TYPE",
                 },
             ],
             accounts,
@@ -482,12 +539,16 @@ class TraeDeploymentTests(TraeTestBase):
         )
 
         self.assertIn('cron: "0 20 * * *"', workflow)
-        self.assertIn("TRAE1_TOKEN: ${{ secrets.TRAE1_TOKEN }}", workflow)
-        self.assertIn("TRAE1_DEVICE_ID: ${{ secrets.TRAE1_DEVICE_ID }}", workflow)
-        self.assertIn("TRAE2_TOKEN: ${{ secrets.TRAE2_TOKEN }}", workflow)
-        self.assertIn("TRAE2_DEVICE_ID: ${{ secrets.TRAE2_DEVICE_ID }}", workflow)
-        self.assertIn("TRAE3_TOKEN: ${{ secrets.TRAE3_TOKEN }}", workflow)
-        self.assertIn("TRAE3_DEVICE_ID: ${{ secrets.TRAE3_DEVICE_ID }}", workflow)
+        for stem in (
+            "A_1780293",
+            "A_1920293",
+            "A_17721",
+            "A_1807095",
+            "A_4028161677",
+        ):
+            for suffix in ("TOKEN", "DEVICE_ID", "DEVICE_BRAND", "DEVICE_TYPE"):
+                name = f"{stem}_{suffix}"
+                self.assertIn(f"{name}: ${{{{ secrets.{name} }}}}", workflow)
         self.assertNotIn("TRAE_DEVICE_ID: ${{ secrets.TRAE_DEVICE_ID }}", workflow)
         self.assertIn("key: signin-token-cache-v2-${{ github.run_id }}", workflow)
         self.assertIn("restore-keys: |", workflow)
@@ -512,7 +573,7 @@ class TraeDeploymentTests(TraeTestBase):
             os.environ,
             {
                 "TRAE1_TOKEN": "raw-secret-must-not-appear",
-                "TRAE1_DEVICE_ID": "raw-device-must-not-appear",
+                "TRAE1_DEVICE_ID": "3132918838145530",
             },
             clear=False,
         ):
@@ -522,7 +583,7 @@ class TraeDeploymentTests(TraeTestBase):
         self.assertIn("TRAE1_TOKEN", result["msg"])
         self.assertIn("TRAE1_DEVICE_ID", result["msg"])
         self.assertNotIn("raw-secret-must-not-appear", result["msg"])
-        self.assertNotIn("raw-device-must-not-appear", result["msg"])
+        self.assertNotIn("3132918838145530", result["msg"])
 
 class NotificationTests(unittest.TestCase):
     def test_unlimited_trae_balance_is_displayed_as_unlimited(self):
@@ -546,18 +607,69 @@ class NotificationTests(unittest.TestCase):
         self.assertIn("余额 **无限积分**", summary)
         self.assertNotIn("inf积分", summary)
 class HardeningTests(TraeTestBase):
-    def test_status_network_failure_does_not_leak_error_or_relogin(self):
+    def test_status_business_code_1001_does_not_relogin_or_retry(self):
         token = make_jwt(int(time.time()) + 3600)
-        transport_secret = "token=must-not-appear"
-        session = FailingSession(transport_secret)
+        session = QueueSession(
+            [FakeResponse({"code": 1001, "message": "token invalid"})]
+        )
         store = MemoryStore(
-            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+            {"token": token, "device_id": "1132918838145530", "expires_at": int(time.time()) + 3600}
         )
         signer = self.make_signer(session=session, store=store)
 
         with patch.dict(
             os.environ,
-            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "1132918838145530"},
+            clear=False,
+        ):
+            result = signer.run()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("status", result["stage"])
+        self.assertEqual(1001, result["business_code"])
+        self.assertFalse(result["claim_attempted"])
+        self.assertEqual(1, len(session.calls))
+
+    def test_claim_business_code_1001_does_not_relogin_or_retry(self):
+        token = make_jwt(int(time.time()) + 3600)
+        session = QueueSession(
+            [
+                FakeResponse(
+                    {"code": 0, "checked_in": False, "credits": 200, "enable": True}
+                ),
+                FakeResponse({"code": 1001, "message": "token invalid"}),
+            ]
+        )
+        store = MemoryStore(
+            {"token": token, "device_id": "1132918838145530", "expires_at": int(time.time()) + 3600}
+        )
+        signer = self.make_signer(session=session, store=store)
+
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "1132918838145530"},
+            clear=False,
+        ):
+            result = signer.run()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("claim", result["stage"])
+        self.assertEqual(1001, result["business_code"])
+        self.assertTrue(result["claim_attempted"])
+        self.assertEqual(2, len(session.calls))
+
+    def test_status_network_failure_does_not_leak_error_or_relogin(self):
+        token = make_jwt(int(time.time()) + 3600)
+        transport_secret = "token=must-not-appear"
+        session = FailingSession(transport_secret)
+        store = MemoryStore(
+            {"token": token, "device_id": "1132918838145530", "expires_at": int(time.time()) + 3600}
+        )
+        signer = self.make_signer(session=session, store=store)
+
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "1132918838145530"},
             clear=False,
         ):
             result = signer.run()
@@ -572,13 +684,13 @@ class HardeningTests(TraeTestBase):
         token = make_jwt(int(time.time()) + 3600)
         session = QueueSession([FakeResponse([])])
         store = MemoryStore(
-            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+            {"token": token, "device_id": "1132918838145530", "expires_at": int(time.time()) + 3600}
         )
         signer = self.make_signer(session=session, store=store)
 
         with patch.dict(
             os.environ,
-            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "1132918838145530"},
             clear=False,
         ):
             result = signer.run()
@@ -593,13 +705,13 @@ class HardeningTests(TraeTestBase):
         response_secret = "access_token=must-not-appear"
         session = QueueSession([NonJsonResponse(response_secret)])
         store = MemoryStore(
-            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+            {"token": token, "device_id": "1132918838145530", "expires_at": int(time.time()) + 3600}
         )
         signer = self.make_signer(session=session, store=store)
 
         with patch.dict(
             os.environ,
-            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "1132918838145530"},
             clear=False,
         ):
             result = signer.run()
@@ -616,13 +728,13 @@ class HardeningTests(TraeTestBase):
             [FakeResponse({"message": "service unavailable"}, status_code=503)]
         )
         store = MemoryStore(
-            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+            {"token": token, "device_id": "1132918838145530", "expires_at": int(time.time()) + 3600}
         )
         signer = self.make_signer(session=session, store=store)
 
         with patch.dict(
             os.environ,
-            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "1132918838145530"},
             clear=False,
         ):
             result = signer.run()
@@ -647,13 +759,13 @@ class HardeningTests(TraeTestBase):
             ]
         )
         store = MemoryStore(
-            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+            {"token": token, "device_id": "1132918838145530", "expires_at": int(time.time()) + 3600}
         )
         signer = self.make_signer(session=session, store=store)
 
         with patch.dict(
             os.environ,
-            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "1132918838145530"},
             clear=False,
         ):
             result = signer.run()
@@ -675,13 +787,13 @@ class HardeningTests(TraeTestBase):
             ]
         )
         store = MemoryStore(
-            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+            {"token": token, "device_id": "1132918838145530", "expires_at": int(time.time()) + 3600}
         )
         signer = self.make_signer(session=session, store=store)
 
         with patch.dict(
             os.environ,
-            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "1132918838145530"},
             clear=False,
         ):
             result = signer.run()
@@ -703,13 +815,13 @@ class HardeningTests(TraeTestBase):
             ]
         )
         store = MemoryStore(
-            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+            {"token": token, "device_id": "1132918838145530", "expires_at": int(time.time()) + 3600}
         )
         signer = self.make_signer(session=session, store=store)
 
         with patch.dict(
             os.environ,
-            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "1132918838145530"},
             clear=False,
         ):
             result = signer.run()
@@ -732,13 +844,13 @@ class HardeningTests(TraeTestBase):
             ]
         )
         store = MemoryStore(
-            {"token": token, "device_id": "device-1", "expires_at": int(time.time()) + 3600}
+            {"token": token, "device_id": "1132918838145530", "expires_at": int(time.time()) + 3600}
         )
         signer = self.make_signer(session=session, store=store)
 
         with patch.dict(
             os.environ,
-            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "device-1"},
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "1132918838145530"},
             clear=False,
         ):
             result = signer.run()
@@ -759,7 +871,7 @@ class HardeningTests(TraeTestBase):
         store = MemoryStore(
             {
                 "token": expired_token,
-                "device_id": "device-1",
+                "device_id": "1132918838145530",
                 "expires_at": None,
             }
         )
@@ -767,7 +879,7 @@ class HardeningTests(TraeTestBase):
 
         with patch.dict(
             os.environ,
-            {"TRAE1_TOKEN": expired_token, "TRAE1_DEVICE_ID": "device-1"},
+            {"TRAE1_TOKEN": expired_token, "TRAE1_DEVICE_ID": "1132918838145530"},
             clear=False,
         ):
             result = signer.run()
@@ -788,12 +900,14 @@ class HardeningTests(TraeTestBase):
             token_env="TRAE1_TOKEN",
             device_env="TRAE1_DEVICE_ID",
         )
-        store = MemoryStore({"token": "t", "device_id": "d", "expires_at": None})
+        store = MemoryStore(
+            {"token": "t", "device_id": "1132918838145530", "expires_at": None}
+        )
         signer = self.make_signer(account, store, OnceFailingSigner)
 
         with patch.dict(
             os.environ,
-            {"TRAE1_TOKEN": "t", "TRAE1_DEVICE_ID": "d"},
+            {"TRAE1_TOKEN": "t", "TRAE1_DEVICE_ID": "1132918838145530"},
             clear=False,
         ):
             result = signer.run()
@@ -844,10 +958,10 @@ class HardeningTests(TraeTestBase):
         with patch.dict(
             os.environ,
             {
-                "TRAE1_TOKEN": "token-1",
-                "TRAE1_DEVICE_ID": "device-1",
-                "TRAE2_TOKEN": "token-2",
-                "TRAE2_DEVICE_ID": "device-2",
+                "A_1780293_TOKEN": "token-1",
+                "A_1780293_DEVICE_ID": "1132918838145530",
+                "A_1920293_TOKEN": "token-2",
+                "A_1920293_DEVICE_ID": "2232918838145530",
             },
             clear=False,
         ):
@@ -856,13 +970,17 @@ class HardeningTests(TraeTestBase):
 
         signer1 = self.make_signer(trae_site.accounts[0])
         signer2 = self.make_signer(trae_site.accounts[1])
-        headers1 = signer1._headers({"token": "token-1", "device_id": "device-1"})
-        headers2 = signer2._headers({"token": "token-2", "device_id": "device-2"})
+        headers1 = signer1._headers(
+            {"token": "token-1", "device_id": "1132918838145530"}
+        )
+        headers2 = signer2._headers(
+            {"token": "token-2", "device_id": "2232918838145530"}
+        )
 
         self.assertEqual("Cloud-IDE-JWT token-1", headers1["Authorization"])
-        self.assertEqual("device-1", headers1["x-device-id"])
+        self.assertEqual("1132918838145530", headers1["x-device-id"])
         self.assertEqual("Cloud-IDE-JWT token-2", headers2["Authorization"])
-        self.assertEqual("device-2", headers2["x-device-id"])
+        self.assertEqual("2232918838145530", headers2["x-device-id"])
 
     def test_trae_notification_uses_consistent_display_name(self):
         from common.notify import Notifier

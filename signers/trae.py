@@ -1,7 +1,7 @@
 """TRAE (trae.cn) 签到站（API 直连）。
 
-认证信息来自 TRAE 桌面客户端：每个账号分别使用自己的 refresh token
-和 telemetry.devDeviceId。签到状态接口提供当天奖励，权益用量接口提供
+认证信息来自 TRAE 桌面客户端：每个账号分别使用自己的 access token
+和注册服务生成的数字设备 ID。签到状态接口提供当天奖励，权益用量接口提供
 账户当前剩余积分。
 """
 import base64
@@ -17,8 +17,6 @@ DEFAULT_BASE_URL = "https://api.trae.cn"
 
 API_HEADERS = {
     "Content-Type": "application/json",
-    "Origin": "https://api.trae.cn",
-    "Referer": "https://api.trae.cn/",
 }
 
 
@@ -68,6 +66,8 @@ class TraeSigner(BaseSigner):
         captured_device_id = None
         token_env = self.account.token_env
         device_env = self.account.device_env
+        device_brand_env = self.account.device_brand_env
+        device_type_env = self.account.device_type_env
 
         if token_env:
             token = os.environ.get(token_env)
@@ -120,10 +120,25 @@ class TraeSigner(BaseSigner):
         if not device_id:
             env_name = device_env or "该账号的 device_env"
             raise RuntimeError(f"缺少 TRAE 设备 ID：请设置环境变量 {env_name}")
+        device_id = device_id.strip()
+        if not device_id.isascii() or not device_id.isdigit():
+            env_name = device_env or "该账号的 device_env"
+            raise RuntimeError(
+                f"TRAE 设备 ID 必须是官方数字设备 ID：请重新同步 {env_name}"
+            )
+
+        device_brand = (
+            os.environ.get(device_brand_env, "").strip() if device_brand_env else ""
+        )
+        device_type = (
+            os.environ.get(device_type_env, "").strip() if device_type_env else ""
+        )
 
         return {
             "token": token,
             "device_id": device_id,
+            "device_brand": device_brand,
+            "device_type": device_type,
             "expires_at": self._jwt_expiry(token),
         }
 
@@ -150,17 +165,33 @@ class TraeSigner(BaseSigner):
         """只有当前 Token、设备 ID 和缓存 JWT 均有效时才复用缓存。"""
         token_env = self.account.token_env
         device_env = self.account.device_env
+        device_brand_env = self.account.device_brand_env
+        device_type_env = self.account.device_type_env
         current_token = os.environ.get(token_env) if token_env else None
         current_device_id = os.environ.get(device_env) if device_env else None
+        current_device_brand = (
+            os.environ.get(device_brand_env, "").strip() if device_brand_env else ""
+        )
+        current_device_type = (
+            os.environ.get(device_type_env, "").strip() if device_type_env else ""
+        )
 
         # TRAE 的 Token 与设备 ID 都是必需的；禁止用缓存补齐缺失的 Secret。
         if token_env and not current_token:
             return False
         if device_env and not current_device_id:
             return False
+        if current_device_id:
+            current_device_id = current_device_id.strip()
+            if not current_device_id.isascii() or not current_device_id.isdigit():
+                return False
         if current_token and current_token != auth.get("token"):
             return False
         if current_device_id and current_device_id != auth.get("device_id"):
+            return False
+        if device_brand_env and current_device_brand != auth.get("device_brand", ""):
+            return False
+        if device_type_env and current_device_type != auth.get("device_type", ""):
             return False
 
         now = time.time()
@@ -188,11 +219,18 @@ class TraeSigner(BaseSigner):
         """认证头由每个 TRAE 请求显式携带，避免写入共享 session。"""
 
     def _headers(self, auth):
-        return {
+        headers = {
             **API_HEADERS,
             "Authorization": f"Cloud-IDE-JWT {auth.get('token', '')}",
             "x-device-id": auth.get("device_id", ""),
         }
+        device_brand = (auth.get("device_brand") or "").strip()
+        device_type = (auth.get("device_type") or "").strip()
+        if device_brand:
+            headers["x-device-brand"] = device_brand
+        if device_type:
+            headers["x-device-type"] = device_type
+        return headers
 
     @classmethod
     def _token_expiry_state(cls, token):
@@ -343,8 +381,6 @@ class TraeSigner(BaseSigner):
         if "code" not in data or data.get("code") == 0:
             return None
         code = data.get("code")
-        if code == 1001:
-            raise AuthExpired()
         return data.get("message") or data.get("msg") or f"code={code}"
 
     def _get_credits_usage(self, base, headers):

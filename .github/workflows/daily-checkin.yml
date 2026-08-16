@@ -53,14 +53,26 @@ jobs:
           ACY7_PASS: ${{ secrets.ACY7_PASS }}
           WB1_TOKEN: ${{ secrets.WB1_TOKEN }}
           WB2_TOKEN: ${{ secrets.WB2_TOKEN }}
-          TRAE1_TOKEN: ${{ secrets.TRAE1_TOKEN }}
-          TRAE1_DEVICE_ID: ${{ secrets.TRAE1_DEVICE_ID }}
-          TRAE2_TOKEN: ${{ secrets.TRAE2_TOKEN }}
-          TRAE2_DEVICE_ID: ${{ secrets.TRAE2_DEVICE_ID }}
-          TRAE3_TOKEN: ${{ secrets.TRAE3_TOKEN }}
-          TRAE3_DEVICE_ID: ${{ secrets.TRAE3_DEVICE_ID }}
-          TRAE4_TOKEN: ${{ secrets.TRAE4_TOKEN }}
-          TRAE4_DEVICE_ID: ${{ secrets.TRAE4_DEVICE_ID }}
+          A_1780293_TOKEN: ${{ secrets.A_1780293_TOKEN }}
+          A_1780293_DEVICE_ID: ${{ secrets.A_1780293_DEVICE_ID }}
+          A_1780293_DEVICE_BRAND: ${{ secrets.A_1780293_DEVICE_BRAND }}
+          A_1780293_DEVICE_TYPE: ${{ secrets.A_1780293_DEVICE_TYPE }}
+          A_1920293_TOKEN: ${{ secrets.A_1920293_TOKEN }}
+          A_1920293_DEVICE_ID: ${{ secrets.A_1920293_DEVICE_ID }}
+          A_1920293_DEVICE_BRAND: ${{ secrets.A_1920293_DEVICE_BRAND }}
+          A_1920293_DEVICE_TYPE: ${{ secrets.A_1920293_DEVICE_TYPE }}
+          A_17721_TOKEN: ${{ secrets.A_17721_TOKEN }}
+          A_17721_DEVICE_ID: ${{ secrets.A_17721_DEVICE_ID }}
+          A_17721_DEVICE_BRAND: ${{ secrets.A_17721_DEVICE_BRAND }}
+          A_17721_DEVICE_TYPE: ${{ secrets.A_17721_DEVICE_TYPE }}
+          A_1807095_TOKEN: ${{ secrets.A_1807095_TOKEN }}
+          A_1807095_DEVICE_ID: ${{ secrets.A_1807095_DEVICE_ID }}
+          A_1807095_DEVICE_BRAND: ${{ secrets.A_1807095_DEVICE_BRAND }}
+          A_1807095_DEVICE_TYPE: ${{ secrets.A_1807095_DEVICE_TYPE }}
+          A_4028161677_TOKEN: ${{ secrets.A_4028161677_TOKEN }}
+          A_4028161677_DEVICE_ID: ${{ secrets.A_4028161677_DEVICE_ID }}
+          A_4028161677_DEVICE_BRAND: ${{ secrets.A_4028161677_DEVICE_BRAND }}
+          A_4028161677_DEVICE_TYPE: ${{ secrets.A_4028161677_DEVICE_TYPE }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}

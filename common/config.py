@@ -4,7 +4,7 @@
 - 账号密码类（如 acy7）：user_env + pass_env
 - 登录态类（如 WorkBuddy 旧方案）：cookies_env（整段 cookies JSON）
 - Token 类（如 WorkBuddy/TRAE）：token_env（token 字符串）
-- 账号附加设备标识（如 TRAE）：device_env
+- 账号附加设备上下文（如 TRAE）：device_env + 可选品牌/系统环境变量
 """
 import os
 from dataclasses import dataclass, field
@@ -19,6 +19,8 @@ class Account:
     cookies_env: str = None
     token_env: str = None
     device_env: str = None
+    device_brand_env: str = None
+    device_type_env: str = None
 
 
 @dataclass
@@ -72,6 +74,8 @@ class Config:
                 cookies_env = a.get("cookies_env")
                 token_env = a.get("token_env")
                 device_env = a.get("device_env")
+                device_brand_env = a.get("device_brand_env")
+                device_type_env = a.get("device_type_env")
                 user = os.environ.get(user_env) if user_env else None
                 pwd = os.environ.get(pass_env) if pass_env else None
                 cookies = os.environ.get(cookies_env) if cookies_env else None
@@ -93,6 +97,8 @@ class Config:
                         cookies_env=cookies_env,
                         token_env=token_env,
                         device_env=device_env,
+                        device_brand_env=device_brand_env,
+                        device_type_env=device_type_env,
                     )
                 )
             if not accounts:
