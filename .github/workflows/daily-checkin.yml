@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       account_filter:
-        description: "可选，格式为站点:账号名，例如 trae:刘浩17721"
+        description: "可选，格式为站点:账号名或稳定 ID，例如 trae:刘浩17721、workbuddy:wb-7f3a8c91d2e4"
         required: false
         default: ""
 
@@ -53,6 +53,7 @@ jobs:
           ACY7_PASS: ${{ secrets.ACY7_PASS }}
           WB1_TOKEN: ${{ secrets.WB1_TOKEN }}
           WB2_TOKEN: ${{ secrets.WB2_TOKEN }}
+          WORKBUDDY_ACCOUNTS_JSON: ${{ secrets.WORKBUDDY_ACCOUNTS_JSON }}
           A_1780293_TOKEN: ${{ secrets.A_1780293_TOKEN }}
           A_1780293_DEVICE_ID: ${{ secrets.A_1780293_DEVICE_ID }}
           A_1780293_DEVICE_BRAND: ${{ secrets.A_1780293_DEVICE_BRAND }}

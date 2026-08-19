@@ -42,11 +42,11 @@ class WorkBuddySigner(BaseSigner):
         1. 环境变量（CI: GitHub Secrets; 本地: .env）
         2. 客户端 auth 文件（本地开发: workbuddy-desktop.info）
         """
-        token = None
+        token = self.account.token
         token_env = self.account.token_env
 
         # 1. 环境变量
-        if token_env:
+        if not token and token_env:
             token = os.environ.get(token_env)
             if token:
                 self.logger.info(
@@ -82,6 +82,12 @@ class WorkBuddySigner(BaseSigner):
             "token": token,
             "expires_at": None,  # token 有效期约 1 年，不自动过期判断
         }
+
+    def is_cached_auth_current(self, auth):
+        current_token = self.account.token
+        if not current_token and self.account.token_env:
+            current_token = os.environ.get(self.account.token_env)
+        return bool(current_token and auth.get("token") == current_token)
 
     def apply_auth(self, auth):
         """认证头改为按请求传递（见 _auth_headers），这里无需操作共享 session。"""

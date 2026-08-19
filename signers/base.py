@@ -43,6 +43,9 @@ class BaseSigner(ABC):
         if auth.get("cookies"):
             self.session.cookies.update(auth["cookies"])
 
+    def credential_key(self):
+        return getattr(self.account, "stable_key", None) or self.account.name
+
     def is_cached_auth_current(self, auth):
         """缓存认证是否仍与当前外部凭证一致；子类可按需覆盖。"""
         return True
@@ -76,7 +79,7 @@ class BaseSigner(ABC):
         return result
 
     def run(self):
-        auth = self.store.get(self.site_name, self.account.name)
+        auth = self.store.get(self.site_name, self.credential_key())
         if auth and not self.store.is_expired(auth) and self.is_cached_auth_current(auth):
             self.apply_auth(auth)
             try:
@@ -105,7 +108,7 @@ class BaseSigner(ABC):
             if hasattr(self, "_cf_bypass"):
                 return self._cf_bypass()
             return self._result({"ok": False, "msg": "Cloudflare/WAF 拦截且未实现绕过"})
-        self.store.save(self.site_name, self.account.name, auth)
+        self.store.save(self.site_name, self.credential_key(), auth)
         self.apply_auth(auth)
         try:
             res = self.checkin(auth)

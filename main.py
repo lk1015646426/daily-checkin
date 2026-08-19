@@ -7,7 +7,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from common.config import Config
+from common.config import Account, Config
 
 load_dotenv()  # 读取项目根目录 .env（账号、token 与通知凭证）
 from common.logger import setup_logger
@@ -35,6 +35,13 @@ def parse_account_filter(value):
     if not separator or not site or not account:
         raise ValueError("账号筛选格式应为 站点:账号名")
     return site, account
+
+
+def account_matches_filter(site_name, account: Account, selector):
+    """按稳定键筛选动态 WorkBuddy 账号，其他站点保持名称匹配。"""
+    if site_name == "workbuddy" and account.stable_key:
+        return account.stable_key == selector
+    return account.name == selector
 
 
 def _diagnostic_suffix(result):
@@ -73,7 +80,9 @@ def main():
             logger.warning(f"未知站点类型: {site.type}，已跳过")
             continue
         for account in site.accounts:
-            if account_filter and account_filter != (site.key, account.name):
+            if account_filter and account_filter[0] != site.key:
+                continue
+            if account_filter and not account_matches_filter(site.key, account, account_filter[1]):
                 continue
             matched_accounts += 1
             try:
