@@ -77,3 +77,18 @@ sites:
         device_env: A_4028161677_DEVICE_ID
         device_brand_env: A_4028161677_DEVICE_BRAND
         device_type_env: A_4028161677_DEVICE_TYPE
+  zhipu:
+    enabled: true
+    type: zhipu
+    # 智谱清言（chatglm.cn）每日登录积分。
+    # 账号与 API Key 由切换工具同步到 GitHub Secret ZHIPU_ACCOUNTS_JSON，
+    # 聚合 Secret 存在时覆盖下方 accounts（本地开发用 token_env 回退）。
+    base_url: https://chatglm.cn
+    # 签到端点已实现（signers/zhipu.py 直连 daily_login_score，抓包验证于 2026-09-08）。
+    # token 由切换工具从清言桌面客户端 Cookie 同步（ZHIPU_ACCOUNTS_JSON）。
+    # 云端每次签到前用 refresh_token 自动换新 access token（refresh 约 180 天有效
+    # 且不轮换），本地无需每天打开工具。
+    accounts:
+      - name: main
+        token_env: ZHIPU_TOKEN
+        refresh_token_env: ZHIPU_REFRESH_TOKEN

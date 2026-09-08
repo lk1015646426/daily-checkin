@@ -17,11 +17,13 @@ from common.store import TokenStore
 from signers.acy7 import Acy7Signer
 from signers.workbuddy import WorkBuddySigner
 from signers.trae import TraeSigner
+from signers.zhipu import ZhipuSigner
 
 SIGNERS = {
     "acy7": Acy7Signer,
     "workbuddy": WorkBuddySigner,
     "trae": TraeSigner,
+    "zhipu": ZhipuSigner,
 }
 
 
@@ -38,8 +40,8 @@ def parse_account_filter(value):
 
 
 def account_matches_filter(site_name, account: Account, selector):
-    """按稳定键筛选动态 WorkBuddy 账号，其他站点保持名称匹配。"""
-    if site_name == "workbuddy" and account.stable_key:
+    """按稳定键筛选动态 WorkBuddy/智谱账号，其他站点保持名称匹配。"""
+    if site_name in ("workbuddy", "zhipu") and account.stable_key:
         return account.stable_key == selector
     return account.name == selector
 
