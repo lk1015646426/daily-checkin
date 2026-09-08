@@ -12,7 +12,7 @@ from common.config import Account, Config, _parse_zhipu_aggregate
 from signers.zhipu import (
     CHECKIN_URL,
     REFRESH_URL,
-    SCORE_URL,
+    USER_INFO_URL,
     ZhipuSigner,
     _jwt_claims,
     _sign_headers,
@@ -181,11 +181,24 @@ class ZhipuSignerTest(unittest.TestCase):
         self.assertIn("X-Nonce", headers)
         self.assertEqual(kwargs["json"], {"refresh_token": "r.s.t"})
 
-    def test_refresh_returns_none_on_auth_failure(self):
-        signer = self.make_signer("a.b.c", "r.s.t")
-        response = Mock(status_code=401)
-        signer.session.post.return_value = response
-        self.assertIsNone(signer._refresh_access_token("r.s.t"))
+    def test_get_score_reads_left_score_from_user_info(self):
+        signer = self.make_signer(fake_jwt(), fake_jwt(jtype="refresh"))
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "status": 0,
+            "result": {"member_info": {"left_score": "1274.35"}},
+        }
+        signer.session.get.return_value = response
+        score = signer._get_score(
+            {"token": fake_jwt(), "refresh_token": fake_jwt(jtype="refresh")}
+        )
+        self.assertEqual(score, "1274.35")
+        args, kwargs = signer.session.get.call_args
+        self.assertEqual(args[0], USER_INFO_URL)
+        self.assertIn("X-Sign", kwargs["headers"])
+        self.assertTrue(
+            kwargs["headers"]["Authorization"].startswith("Bearer ")
+        )
 
     def test_checkin_reports_already_claimed(self):
         signer = self.make_signer(fake_jwt())
@@ -195,12 +208,12 @@ class ZhipuSignerTest(unittest.TestCase):
         score_response = Mock(status_code=200)
         score_response.json.return_value = {
             "status": 0,
-            "result": {"current_score": 948},
+            "result": {"member_info": {"left_score": "1274.35"}},
         }
         signer.session.get.return_value = score_response
-        result = signer.checkin({"token": fake_jwt()})
+        result = signer.checkin({"token": fake_jwt(), "refresh_token": ""})
         self.assertTrue(result["ok"])
-        self.assertEqual(result["points"], 948)
+        self.assertEqual(result["points"], "1274.35")
         self.assertIn("今日已领取", result["msg"])
 
     def test_checkin_raises_auth_expired_on_401(self):
@@ -210,10 +223,16 @@ class ZhipuSignerTest(unittest.TestCase):
         with self.assertRaises(Exception):
             signer.checkin({"token": fake_jwt()})
 
+    def test_refresh_returns_none_on_auth_failure(self):
+        signer = self.make_signer("a.b.c", "r.s.t")
+        response = Mock(status_code=401)
+        signer.session.post.return_value = response
+        self.assertIsNone(signer._refresh_access_token("r.s.t"))
+
     def test_endpoints_never_mixed(self):
-        # 签到/积分走 member-api（免签名）；刷新走 user-api（签名）。
+        # 签到走 member-api（免签名）；积分/刷新走 user-api（需签名）。
         self.assertIn("member-api", CHECKIN_URL)
-        self.assertIn("member-api", SCORE_URL)
+        self.assertIn("user-api", USER_INFO_URL)
         self.assertIn("user-api", REFRESH_URL)
 
 

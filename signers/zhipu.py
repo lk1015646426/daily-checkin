@@ -32,6 +32,7 @@ from .base import AuthExpired, BaseSigner
 
 CHECKIN_URL = "https://chatglm.cn/chatglm/member-api/member/daily_login_score"
 SCORE_URL = "https://chatglm.cn/chatglm/member-api/member/score_activity_status"
+USER_INFO_URL = "https://chatglm.cn/chatglm/user-api/user/info"
 REFRESH_URL = "https://chatglm.cn/chatglm/user-api/user/refresh"
 
 API_HEADERS = {
@@ -67,12 +68,15 @@ def _vj_timestamp(now_ms):
     return text[: n - 2] + str(checksum) + text[n - 1 :]
 
 
-def _sign_headers(device_id):
-    """构造 user-api 签名请求头（X-Timestamp/X-Nonce/X-Sign 等）。"""
+def _sign_headers(device_id, token=None):
+    """构造 user-api 签名请求头（X-Timestamp/X-Nonce/X-Sign 等）。
+
+    token 提供时同时附加 Authorization: Bearer。
+    """
     ts = _vj_timestamp(int(time.time() * 1000))
     nonce = uuid.uuid4().hex
     sign = hashlib.md5(f"{ts}-{nonce}-{_SIGN_SALT}".encode()).hexdigest()
-    return {
+    headers = {
         "Content-Type": "application/json;charset=utf-8",
         "App-Name": "chatglm",
         "X-Device-Id": device_id,
@@ -84,6 +88,9 @@ def _sign_headers(device_id):
         "X-Sign": sign,
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 class ZhipuSigner(BaseSigner):
@@ -210,8 +217,8 @@ class ZhipuSigner(BaseSigner):
             }
         status = data.get("status")
         message = str(data.get("message", "") or "")
-        # 签到后查询实际积分余额，通知文案与 WorkBuddy/TRAE 结构一致。
-        current_score = self._get_score(headers)
+        # 签到后查询总积分（user/info 口径，与客户端一致）。
+        current_score = self._get_score(auth)
         score_str = (
             f"{current_score:g}" if isinstance(current_score, (int, float)) else "未知"
         )
@@ -231,16 +238,24 @@ class ZhipuSigner(BaseSigner):
             }
         return {"ok": False, "points": 0, "msg": message or f"签到失败 (status={status})"}
 
-    def _get_score(self, headers):
-        """只读查询当前积分（score_activity_status.current_score）。"""
+    def _get_score(self, auth):
+        """只读查询总积分（user/info 的 member_info.left_score，客户端同口径）。
+
+        需签名头；device_id 取 JWT 声明（access/refresh token 中一致）。
+        """
         s = self.session
+        token = auth.get("token") or ""
+        refresh = auth.get("refresh_token") or ""
+        source = _jwt_claims(token) or _jwt_claims(refresh)
+        device_id = source.get("device_id") or ""
         try:
-            resp = s.get(SCORE_URL, headers=headers, timeout=30)
+            headers = _sign_headers(device_id, token=token)
+            resp = s.get(USER_INFO_URL, headers=headers, timeout=30)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("status") == 0:
-                    result = data.get("result") or {}
-                    return result.get("current_score")
+                    member = (data.get("result") or {}).get("member_info") or {}
+                    return member.get("left_score")
         except Exception as e:
             self.logger.warning(f"zhipu/{self.account.name} 查询积分失败: {e}")
         return None
