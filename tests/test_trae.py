@@ -480,8 +480,8 @@ class TraeCreditsTests(TraeTestBase):
 class TraeDeploymentTests(TraeTestBase):
     def test_account_filter_parses_site_and_name(self):
         self.assertEqual(
-            ("trae", "刘浩17721"),
-            parse_account_filter("trae:刘浩17721"),
+            ("trae", "1780293"),
+            parse_account_filter("trae:1780293"),
         )
 
     def test_account_filter_rejects_missing_separator(self):
@@ -497,6 +497,7 @@ class TraeDeploymentTests(TraeTestBase):
                 {
                     "name": "1780293",
                     "token_env": "A_1780293_TOKEN",
+                    "refresh_env": "A_1780293_REFRESH_JSON",
                     "device_env": "A_1780293_DEVICE_ID",
                     "device_brand_env": "A_1780293_DEVICE_BRAND",
                     "device_type_env": "A_1780293_DEVICE_TYPE",
@@ -504,30 +505,10 @@ class TraeDeploymentTests(TraeTestBase):
                 {
                     "name": "1920293",
                     "token_env": "A_1920293_TOKEN",
+                    "refresh_env": "A_1920293_REFRESH_JSON",
                     "device_env": "A_1920293_DEVICE_ID",
                     "device_brand_env": "A_1920293_DEVICE_BRAND",
                     "device_type_env": "A_1920293_DEVICE_TYPE",
-                },
-                {
-                    "name": "刘浩17721",
-                    "token_env": "A_17721_TOKEN",
-                    "device_env": "A_17721_DEVICE_ID",
-                    "device_brand_env": "A_17721_DEVICE_BRAND",
-                    "device_type_env": "A_17721_DEVICE_TYPE",
-                },
-                {
-                    "name": "1807095",
-                    "token_env": "A_1807095_TOKEN",
-                    "device_env": "A_1807095_DEVICE_ID",
-                    "device_brand_env": "A_1807095_DEVICE_BRAND",
-                    "device_type_env": "A_1807095_DEVICE_TYPE",
-                },
-                {
-                    "name": "用户4028161677",
-                    "token_env": "A_4028161677_TOKEN",
-                    "device_env": "A_4028161677_DEVICE_ID",
-                    "device_brand_env": "A_4028161677_DEVICE_BRAND",
-                    "device_type_env": "A_4028161677_DEVICE_TYPE",
                 },
             ],
             accounts,
@@ -542,13 +523,22 @@ class TraeDeploymentTests(TraeTestBase):
         for stem in (
             "A_1780293",
             "A_1920293",
-            "A_17721",
-            "A_1807095",
-            "A_4028161677",
         ):
-            for suffix in ("TOKEN", "DEVICE_ID", "DEVICE_BRAND", "DEVICE_TYPE"):
+            for suffix in (
+                "TOKEN",
+                "REFRESH_JSON",
+                "DEVICE_ID",
+                "DEVICE_BRAND",
+                "DEVICE_TYPE",
+            ):
                 name = f"{stem}_{suffix}"
                 self.assertIn(f"{name}: ${{{{ secrets.{name} }}}}", workflow)
+        for removed in (
+            "A_17721_TOKEN",
+            "A_1807095_TOKEN",
+            "A_4028161677_TOKEN",
+        ):
+            self.assertNotIn(f"{removed}:", workflow)
         self.assertNotIn("TRAE_DEVICE_ID: ${{ secrets.TRAE_DEVICE_ID }}", workflow)
         self.assertIn("key: signin-token-cache-v2-${{ github.run_id }}", workflow)
         self.assertIn("restore-keys: |", workflow)

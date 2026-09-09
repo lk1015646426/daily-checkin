@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       account_filter:
-        description: "可选，格式为站点:账号名或稳定 ID，例如 trae:刘浩17721、workbuddy:wb-7f3a8c91d2e4、zhipu:zp-1a2b3c4d5e6f"
+        description: "可选，格式为站点:账号名或稳定 ID，例如 trae:1780293、workbuddy:wb-7f3a8c91d2e4、zhipu:zp-1a2b3c4d5e6f"
         required: false
         default: ""
 
@@ -55,6 +55,8 @@ jobs:
           WB2_TOKEN: ${{ secrets.WB2_TOKEN }}
           WORKBUDDY_ACCOUNTS_JSON: ${{ secrets.WORKBUDDY_ACCOUNTS_JSON }}
           ZHIPU_ACCOUNTS_JSON: ${{ secrets.ZHIPU_ACCOUNTS_JSON }}
+          A_1780293_REFRESH_JSON: ${{ secrets.A_1780293_REFRESH_JSON }}
+          A_1920293_REFRESH_JSON: ${{ secrets.A_1920293_REFRESH_JSON }}
           A_1780293_TOKEN: ${{ secrets.A_1780293_TOKEN }}
           A_1780293_DEVICE_ID: ${{ secrets.A_1780293_DEVICE_ID }}
           A_1780293_DEVICE_BRAND: ${{ secrets.A_1780293_DEVICE_BRAND }}
@@ -63,18 +65,6 @@ jobs:
           A_1920293_DEVICE_ID: ${{ secrets.A_1920293_DEVICE_ID }}
           A_1920293_DEVICE_BRAND: ${{ secrets.A_1920293_DEVICE_BRAND }}
           A_1920293_DEVICE_TYPE: ${{ secrets.A_1920293_DEVICE_TYPE }}
-          A_17721_TOKEN: ${{ secrets.A_17721_TOKEN }}
-          A_17721_DEVICE_ID: ${{ secrets.A_17721_DEVICE_ID }}
-          A_17721_DEVICE_BRAND: ${{ secrets.A_17721_DEVICE_BRAND }}
-          A_17721_DEVICE_TYPE: ${{ secrets.A_17721_DEVICE_TYPE }}
-          A_1807095_TOKEN: ${{ secrets.A_1807095_TOKEN }}
-          A_1807095_DEVICE_ID: ${{ secrets.A_1807095_DEVICE_ID }}
-          A_1807095_DEVICE_BRAND: ${{ secrets.A_1807095_DEVICE_BRAND }}
-          A_1807095_DEVICE_TYPE: ${{ secrets.A_1807095_DEVICE_TYPE }}
-          A_4028161677_TOKEN: ${{ secrets.A_4028161677_TOKEN }}
-          A_4028161677_DEVICE_ID: ${{ secrets.A_4028161677_DEVICE_ID }}
-          A_4028161677_DEVICE_BRAND: ${{ secrets.A_4028161677_DEVICE_BRAND }}
-          A_4028161677_DEVICE_TYPE: ${{ secrets.A_4028161677_DEVICE_TYPE }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}

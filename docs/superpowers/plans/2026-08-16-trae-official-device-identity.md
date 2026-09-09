@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make local and GitHub Actions TRAE check-in requests use the same numeric registered device identity and device headers as TRAE Work, while preventing unchanged tokens from being reported as refreshed.
+**Goal:** Make local and GitHub Actions TRAE check-in requests use the same numeric registered device identity and device headers as TRAE Work, while separating Token rotation from valid-token device identity repair.
 
-**Architecture:** Keep account storage backward-compatible, but introduce narrow pure helpers that select the official numeric `auth_device_id`, build device headers, and compare token metadata. The switcher writes existing token/device secrets plus derived brand/type secrets; the Python signer consumes them without retries.
+**Architecture:** Keep account storage backward-compatible, but introduce narrow pure helpers that select the official numeric `auth_device_id`, build device headers, compare token metadata, and validate a complete target snapshot. The switcher writes existing token/device secrets plus derived brand/type secrets; the Python signer consumes them without retries. Refresh orchestration waits for Token rotation only when the cached Token is expired or due for rotation; valid Tokens can synchronize a newly verified device snapshot without a false rotation claim.
 
 **Tech Stack:** Rust/Tauri 2, TypeScript/React/Zustand, Python 3 unittest/requests, GitHub Actions, NSIS.
 
@@ -86,7 +86,7 @@ Run: `cargo test work_cn_github --manifest-path src-tauri/Cargo.toml`
 
 Expected: all matching tests pass.
 
-### Task 3: Require Actual Token Rotation In Refresh Flow
+### Task 3: Separate Token Rotation From Device Identity Refresh
 
 **Files:**
 - Modify: `C:/Users/10156/Desktop/脚本/切换应用/source/src-tauri/src/models/work_cn.rs`
@@ -100,11 +100,12 @@ Expected: all matching tests pass.
 **Interfaces:**
 - Produces: desensitized `tokenIssuedAt: number | null` on `WorkCnAccountView`.
 - Produces: `didTokenRotate(before, after): boolean`, comparing `iat` and `exp` metadata.
+- Produces: `shouldWaitForTokenRotation(metadata, now): boolean` and a complete-snapshot predicate used before GitHub synchronization.
 - Consumes: session watcher `TOKEN_UPDATED` event and refreshed account list.
 
-- [ ] **Step 1: Add a failing TypeScript unit test**
+- [ ] **Step 1: Add failing TypeScript unit tests**
 
-Test that unchanged `iat/exp` returns false, changed `iat` or `exp` returns true, and missing metadata does not create a false positive.
+Test unchanged `iat/exp` returns false, changed `iat` or `exp` returns true, missing metadata does not create a false positive, expired metadata requires rotation, and a valid unrotated Token does not require rotation when the device snapshot is complete.
 
 - [ ] **Step 2: Run the test and observe failure**
 
@@ -112,13 +113,13 @@ Run: `node --test src/utils/tokenRotation.test.ts`
 
 Expected: module/function missing failure.
 
-- [ ] **Step 3: Implement metadata exposure and comparison helper**
+- [ ] **Step 3: Implement metadata exposure, rotation policy, and snapshot predicate**
 
-Parse JWT `iat` in Rust exactly as `exp` is parsed, expose only timestamps, implement the pure TypeScript comparison, and add `test:token-rotation` to package scripts.
+Parse JWT `iat` in Rust exactly as `exp` is parsed, expose only timestamps, implement pure TypeScript helpers for rotation policy and complete snapshot validation, and add `test:token-rotation` to package scripts.
 
-- [ ] **Step 4: Replace the five-day freshness shortcut**
+- [ ] **Step 4: Replace the five-day freshness shortcut and split refresh paths**
 
-Capture the pre-switch token metadata. Finish only on the matching `TOKEN_UPDATED` event or when polling observes `didTokenRotate(...) === true`. On timeout report that the Token did not change.
+Capture the pre-switch UID, Token metadata, and device snapshot. Confirm the switched client belongs to the requested UID and has a valid complete device snapshot. If the Token is expired/due for rotation, finish only on the matching `TOKEN_UPDATED` event or when polling observes `didTokenRotate(...) === true`; if it remains valid, synchronize immediately after snapshot validation. On timeout report Token rotation failure only for the expired/due path.
 
 - [ ] **Step 5: Run TypeScript tests and typecheck**
 

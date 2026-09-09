@@ -55,19 +55,25 @@ logs/.gitkeep                 日志目录占位文件
 
 | Secret | 说明 |
 | --- | --- |
+| `WORKBUDDY_ACCOUNTS_JSON` | 推荐。桌面工具自动维护的多账号聚合 Secret，格式为带 `version: 1` 的账号数组。 |
 | `WB1_TOKEN` | 第一个 WorkBuddy 账号的 access token |
 | `WB2_TOKEN` | 第二个 WorkBuddy 账号的 access token |
+
+`WORKBUDDY_ACCOUNTS_JSON` 存在且格式合法时优先使用，支持任意数量账号；合法空账号数组会明确停用所有 WorkBuddy 签到。未部署该 Secret 或格式无效时，工作流继续兼容 `WB1_TOKEN`、`WB2_TOKEN`。
+
+聚合 Secret 只包含稳定账号键、用于通知的显示名和 access token，不包含完整认证文件、refresh token、session state 或手机号。建议由桌面端的 WorkBuddy 页面同步，不要手工粘贴完整认证文件。
 
 #### TRAE
 
 | Secret | 说明 |
 | --- | --- |
-| `TRAE1_TOKEN` | TRAE 账号 `1780293` 的 refresh token |
-| `TRAE1_DEVICE_ID` | TRAE 账号 `1780293` 的客户端设备 ID |
-| `TRAE2_TOKEN` | TRAE 账号 `1920293` 的 refresh token |
-| `TRAE2_DEVICE_ID` | TRAE 账号 `1920293` 的客户端设备 ID |
+| `A_1780293_TOKEN` | TRAE 账号 `1780293` 的 access token |
+| `A_1780293_DEVICE_ID` | TRAE 账号 `1780293` 的数字设备 ID（icube-dc） |
+| `A_1780293_DEVICE_BRAND` / `A_1780293_DEVICE_TYPE` | 设备品牌与类型 |
+| `A_1780293_REFRESH_JSON` | 云端自主续期材料（refresh token + 设备密钥对，由种子脚本写入） |
+| `A_1920293_*` | 账号 `1920293` 的同名五项 |
 
-两个账号的 Token 和设备 ID 必须分别从各自的登录状态提取并成对填写，不能把一个账号的 Token 与另一个账号的设备 ID 混用。
+两个账号的 Token 和设备 ID 必须分别从各自的登录状态提取并成对填写，不能把一个账号的 Token 与另一个账号的设备 ID 混用。配置了 `*_REFRESH_JSON` 后，云端会在 access token 剩余有效期不足 6 小时时自动调用 ExchangeToken 换新（refresh token 每次轮换，最新值随 actions/cache 持久化），无需每天手动更新 Token。
 
 #### 通知（二选一）
 
@@ -162,19 +168,17 @@ python main.py
 
 不同客户端版本的文件位置可能不同。不要把认证文件或 token 提交到 Git。
 
+桌面端支持在 WorkBuddy 页面设置自定义 EXE 与认证文件路径。切换时会先请求官方客户端正常退出；只有用户在确认框中明确同意后才会强制结束进程。取消确认不会修改认证文件。
+
 ### TRAE
 
-在已经登录的 TRAE 客户端中找到 `storage.json`，提取 refresh token 和设备 ID：
+Token 与设备 ID 由切换工具从官方客户端快照同步；云端自主续期材料由种子脚本写入：
 
-```text
-%APPDATA%\TRAE SOLO CN\User\globalStorage\storage.json
-```
-
-- 账号 `1780293` 的 refresh token 和 `telemetry.devDeviceId` 分别填入 `TRAE1_TOKEN`、`TRAE1_DEVICE_ID`
-- 账号 `1920293` 的 refresh token 和 `telemetry.devDeviceId` 分别填入 `TRAE2_TOKEN`、`TRAE2_DEVICE_ID`
-- Token 与设备 ID 必须来自同一个账号的登录状态，不得交叉使用
-- refresh token 失效后，需要重新登录对应账号并更新该账号的两个 GitHub Secrets
-- 如果账号 `1780293` 返回 401，请优先重新提取并更新 `TRAE1_TOKEN` 和 `TRAE1_DEVICE_ID`；工作流不会在日志或通知中输出真实凭证
+- 运行 `切换应用\daily-checkin-additions\seed_trae_refresh_secrets.py`（dry-run 检查完整性，`--apply` 实际写入）
+- 脚本从切换工具的加密账号库提取 refresh token、设备密钥对、数字设备 ID 和 machine ID，打包为 `A_<账号>_REFRESH_JSON` Secret
+- 账号 `1780293`、`1920293` 各对应一组 `A_<账号>_*` Secrets，不得交叉使用
+- refresh token 有效期约 6 个月且每次刷新轮换；轮换链断裂（如缓存丢失且 Secret 过期）时，需在 TRAE 客户端重新登录该账号后重跑种子脚本
+- 如果某账号签到返回 401，请优先重跑种子脚本更新该账号的 Secrets；工作流不会在日志或通知中输出真实凭证
 
 TRAE 签到完成后会额外查询账户权益余额，因此通知会与 WorkBuddy 使用相同的信息结构，例如：
 

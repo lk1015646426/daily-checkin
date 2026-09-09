@@ -46,37 +46,33 @@ sites:
     # TRAE 桌面客户端积分签到
     # 签到 API 直接调用 api.trae.cn，每个账号必须使用自己的 token 和设备 ID。
     base_url: https://api.trae.cn
+    # 云端自主续期（ExchangeToken）所需的本机设备上下文（2026-09-08 实测值；
+    # client_version 需与 TRAE 客户端 product.json 的 appVersion 保持一致）。
+    device_info:
+      platform_code: SOLO_PC
+      device_name: "10156的电脑"
+      device_model: "INVA"
+      device_brand: "LENOVO"
+      device_cpu: "AMD Ryzen 5 6600H with Radeon Graphics"
+      os_info: "windows"
+      os_version: "Windows 11 Home China"
+      client_version: "0.1.63"
     accounts:
       # token、数字 auth_device_id 和设备上下文均由切换工具从官方客户端快照同步。
       # 两个账号的认证信息不可混用，否则可能返回 401。
+      # 2026-09-09 起只保留尾号 0293 的两个账号，其余账号已从切换工具移除。
       - name: "1780293"
         token_env: A_1780293_TOKEN
+        refresh_env: A_1780293_REFRESH_JSON
         device_env: A_1780293_DEVICE_ID
         device_brand_env: A_1780293_DEVICE_BRAND
         device_type_env: A_1780293_DEVICE_TYPE
       - name: "1920293"
         token_env: A_1920293_TOKEN
+        refresh_env: A_1920293_REFRESH_JSON
         device_env: A_1920293_DEVICE_ID
         device_brand_env: A_1920293_DEVICE_BRAND
         device_type_env: A_1920293_DEVICE_TYPE
-      # 槽位 3：刘浩17721。name 与切换工具账号备注一致，仅用于通知显示。
-      - name: "刘浩17721"
-        token_env: A_17721_TOKEN
-        device_env: A_17721_DEVICE_ID
-        device_brand_env: A_17721_DEVICE_BRAND
-        device_type_env: A_17721_DEVICE_TYPE
-      # 槽位 4：1807095。各账号 device_id 必须互不相同，否则服务端按同设备去重。
-      - name: "1807095"
-        token_env: A_1807095_TOKEN
-        device_env: A_1807095_DEVICE_ID
-        device_brand_env: A_1807095_DEVICE_BRAND
-        device_type_env: A_1807095_DEVICE_TYPE
-      # 槽位 5：新注册账号，切换工具显示名为“用户4028161677”。
-      - name: "用户4028161677"
-        token_env: A_4028161677_TOKEN
-        device_env: A_4028161677_DEVICE_ID
-        device_brand_env: A_4028161677_DEVICE_BRAND
-        device_type_env: A_4028161677_DEVICE_TYPE
   zhipu:
     enabled: true
     type: zhipu

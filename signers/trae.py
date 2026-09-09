@@ -19,6 +19,15 @@ API_HEADERS = {
     "Content-Type": "application/json",
 }
 
+# ---------- 云端自主续期（ExchangeToken，2026-09-08 实测打通） ----------
+EXCHANGE_URL_PATH = "/trae/api/v3/oauth/ExchangeToken"
+EXCHANGE_CLIENT_ID = "en1oxy7wnw8j9n"
+# 指纹必须是 chrome133a（TRAE 客户端 Electron 33.4 / Chrome 134 的最近版本）：
+# 实测默认 "chrome"、chrome136、chrome131 均被服务器以 401 Token device not match 拒绝。
+EXCHANGE_IMPERSONATE = "chrome133a"
+# access token 剩余寿命低于该秒数时触发云端刷新。
+EXCHANGE_THRESHOLD_SECONDS = 6 * 3600
+
 
 class TraeHttpError(RuntimeError):
     """TRAE 非 2xx 响应；保留脱敏诊断所需的响应与业务数据。"""
@@ -134,12 +143,160 @@ class TraeSigner(BaseSigner):
             os.environ.get(device_type_env, "").strip() if device_type_env else ""
         )
 
-        return {
+        expires_at = self._jwt_expiry(token)
+        # 云端自主续期：链上（此前云端刷新持久化的）token 可能比环境变量
+        # 同步的新；环境变量 token 较新（用户在用 TRAE、工具在同步）时以
+        # 环境变量为准，避免与本地客户端的刷新链竞争。
+        prev_auth = self.store.get(self.site_name, self.credential_key()) or {}
+        chain = prev_auth.get("refresh_chain") or {}
+        if chain:
+            chain_exp = self._jwt_expiry(prev_auth.get("token") or "")
+            if chain_exp and (expires_at is None or chain_exp > expires_at + 60):
+                token = prev_auth["token"]
+                expires_at = chain_exp
+        # access token 即将过期且具备刷新材料时换新（refresh token 轮换，
+        # 最新值随 auth 缓存持久化，由 actions/cache 的 store/ 跨运行保存）。
+        if expires_at is not None and expires_at <= time.time() + EXCHANGE_THRESHOLD_SECONDS:
+            material = self._refresh_material(prev_auth)
+            if material:
+                exchanged = self._exchange_token(material, token)
+                if exchanged:
+                    token = exchanged["token"]
+                    expires_at = exchanged["expires_at"]
+                    chain = exchanged["chain"]
+        auth = {
             "token": token,
             "device_id": device_id,
             "device_brand": device_brand,
             "device_type": device_type,
-            "expires_at": self._jwt_expiry(token),
+            "expires_at": expires_at,
+        }
+        if chain:
+            auth["refresh_chain"] = chain
+        return auth
+
+    def _refresh_material(self, prev_auth):
+        """刷新材料：优先轮换链上最新的 refresh token，回退环境变量中的
+        初始 refresh JSON（由种子脚本/切换工具同步到 Secret）。"""
+        chain = prev_auth.get("refresh_chain") or {}
+        if chain.get("refresh_token") and chain.get("private_key_pem"):
+            return dict(chain)
+        material = getattr(self.account, "refresh_json", None)
+        if (
+            isinstance(material, dict)
+            and material.get("refresh_token")
+            and material.get("private_key_pem")
+        ):
+            return dict(material)
+        return None
+
+    def _exchange_device_info(self, material):
+        """组装 DeviceInfo；静态机器字段来自 config.yaml 的 device_info。"""
+        info = (self.site.raw or {}).get("device_info") or {}
+        return {
+            "DeviceID": material.get("device_id") or "",
+            "MachineID": material.get("machine_id") or "",
+            "PlatformCode": info.get("platform_code", "SOLO_PC"),
+            "DeviceType": "PC",
+            "DeviceName": info.get("device_name", ""),
+            "DeviceModel": info.get("device_model", ""),
+            "ClientVersion": info.get("client_version", ""),
+            "DevicePublicKey": material.get("public_key_pem") or "",
+            "DeviceBrand": info.get("device_brand", ""),
+            "DeviceCPU": info.get("device_cpu", ""),
+            "OSInfo": info.get("os_info", "windows"),
+            "OSVersion": info.get("os_version", ""),
+        }
+
+    def _exchange_token(self, material, current_access):
+        """调 ExchangeToken 换新 token 对；失败返回 None（回退现有 token）。
+
+        实测约束（2026-09-08）：
+        - curl_cffi 指纹必须是 chrome133a（见 EXCHANGE_IMPERSONATE 注释）；
+        - DeviceID 必须是 icube-dc 数字设备 ID（误用 userId 同样 401）；
+        - DeviceProof 每次需全新 Timestamp/Nonce（复用会被拒）；
+        - refresh token 每次轮换，最新值必须持久化。
+        """
+        try:
+            import base64 as b64_mod
+            import secrets as secrets_mod
+
+            from curl_cffi import requests as cffi_requests
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import ec
+        except ImportError as error:
+            self.logger.warning(f"trae/{self.account.name} 缺少刷新依赖: {error}")
+            return None
+
+        try:
+            private_key = serialization.load_pem_private_key(
+                material["private_key_pem"].encode(), password=None
+            )
+        except Exception as error:
+            self.logger.warning(f"trae/{self.account.name} 设备私钥无效: {error}")
+            return None
+
+        base = (self.site.base_url or DEFAULT_BASE_URL).rstrip("/")
+        info = (self.site.raw or {}).get("device_info") or {}
+        version = info.get("client_version", "")
+        timestamp = int(time.time())
+        nonce = secrets_mod.token_hex(16)
+        message = "\n".join(
+            ["POST", EXCHANGE_URL_PATH, EXCHANGE_CLIENT_ID,
+             material["refresh_token"], str(timestamp), nonce]
+        )
+        signature = b64_mod.b64encode(
+            private_key.sign(message.encode(), ec.ECDSA(hashes.SHA256()))
+        ).decode()
+        body = {
+            "ClientID": EXCHANGE_CLIENT_ID,
+            "ClientSecret": "",
+            "RefreshToken": material["refresh_token"],
+            "DeviceInfo": self._exchange_device_info(material),
+            "DeviceProof": {"Signature": signature, "Timestamp": timestamp, "Nonce": nonce},
+            "IDEVersion": version,
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "x-cloudide-token": current_access or "",
+            "User-Agent": (
+                f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                f"(KHTML, like Gecko) TRAE SOLO CN/{version} Chrome/134.0.0.0 "
+                f"Safari/537.36 Electron/33.4.0"
+            ),
+        }
+        try:
+            resp = cffi_requests.post(
+                f"{base}{EXCHANGE_URL_PATH}",
+                json=body,
+                headers=headers,
+                impersonate=EXCHANGE_IMPERSONATE,
+                timeout=30,
+            )
+        except Exception as error:
+            self.logger.warning(f"trae/{self.account.name} 换卡请求失败: {error}")
+            return None
+        if resp.status_code != 200:
+            self.logger.warning(
+                f"trae/{self.account.name} 换卡失败 (HTTP {resp.status_code}): "
+                f"{resp.text[:120]}"
+            )
+            return None
+        try:
+            result = (resp.json() or {}).get("Result") or {}
+        except ValueError:
+            return None
+        new_token = result.get("Token")
+        new_refresh = result.get("RefreshToken")
+        if not new_token or not new_refresh:
+            return None
+        new_material = dict(material)
+        new_material["refresh_token"] = new_refresh
+        self.logger.info(f"trae/{self.account.name} access token 已云端续期")
+        return {
+            "token": new_token,
+            "expires_at": self._jwt_expiry(new_token),
+            "chain": new_material,
         }
 
     @staticmethod

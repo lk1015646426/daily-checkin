@@ -27,6 +27,8 @@ class Account:
     token: str = None
     refresh_token: str = None
     refresh_token_env: str = None
+    refresh_env: str = None
+    refresh_json: dict = None
 
 
 @dataclass
@@ -101,6 +103,8 @@ class Config:
                     stable_key = a.stable_key
                     refresh_token = a.refresh_token
                     refresh_token_env = a.refresh_token_env
+                    refresh_env = getattr(a, "refresh_env", None)
+                    refresh_json = getattr(a, "refresh_json", None)
                 else:
                     name = (
                         a.get("name")
@@ -124,6 +128,15 @@ class Config:
                     refresh_token = (
                         os.environ.get(refresh_token_env) if refresh_token_env else None
                     )
+                    refresh_env = a.get("refresh_env")
+                    refresh_json = None
+                    if refresh_env:
+                        raw_refresh = os.environ.get(refresh_env)
+                        if raw_refresh:
+                            try:
+                                refresh_json = json.loads(raw_refresh)
+                            except (TypeError, json.JSONDecodeError):
+                                refresh_json = None
                     stable_key = None
                 has_pwd = bool(user and pwd)
                 has_cookies = bool(cookies)
@@ -148,6 +161,8 @@ class Config:
                         token=token,
                         refresh_token=refresh_token,
                         refresh_token_env=refresh_token_env,
+                        refresh_env=refresh_env,
+                        refresh_json=refresh_json,
                     )
                 )
             if not accounts:

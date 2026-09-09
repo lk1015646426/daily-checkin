@@ -52,3 +52,4 @@ sync_error.log
 trae_accounts.json
 auto_trae_refresh.py
 HANDOFF_TRAE_TOKEN_REFRESH.md
+HANDOFF_DEVICE_ID_SOLUTION.md
