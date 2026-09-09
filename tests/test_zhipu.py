@@ -213,7 +213,8 @@ class ZhipuSignerTest(unittest.TestCase):
         signer.session.get.return_value = score_response
         result = signer.checkin({"token": fake_jwt(), "refresh_token": ""})
         self.assertTrue(result["ok"])
-        self.assertEqual(result["points"], "1274.35")
+        # left_score 字符串已转数值，通知层按积分样式渲染
+        self.assertEqual(result["points"], 1274.35)
         self.assertIn("今日已领取", result["msg"])
 
     def test_checkin_raises_auth_expired_on_401(self):
@@ -234,6 +235,36 @@ class ZhipuSignerTest(unittest.TestCase):
         self.assertIn("member-api", CHECKIN_URL)
         self.assertIn("user-api", USER_INFO_URL)
         self.assertIn("user-api", REFRESH_URL)
+
+
+class ZhipuNotificationTest(unittest.TestCase):
+    def test_summary_renders_zhipu_balance_in_trae_style(self):
+        from common.notify import Notifier
+
+        summary = Notifier.format_summary(
+            [
+                {
+                    "site": "zhipu",
+                    "account": "1923597",
+                    "ok": True,
+                    "points": 1474.35,
+                    "points_unit": "积分",
+                    "msg": "今日已领取，当前积分 1474.35",
+                },
+                {
+                    "site": "zhipu",
+                    "account": "1923597",
+                    "ok": True,
+                    "points": None,
+                    "points_unit": "积分",
+                    "msg": "今日已领取，当前积分 未知",
+                },
+            ]
+        )
+        # 有积分：与 TRAE/WorkBuddy 同款"余额 **X积分**"样式
+        self.assertIn("✅ 智谱 1923597：余额 **1474.35积分**", summary)
+        # 无积分：回退到 msg 文本，不渲染空余额
+        self.assertIn("今日已领取，当前积分 未知", summary)
 
 
 if __name__ == "__main__":

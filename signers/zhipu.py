@@ -218,9 +218,11 @@ class ZhipuSigner(BaseSigner):
         status = data.get("status")
         message = str(data.get("message", "") or "")
         # 签到后查询总积分（user/info 口径，与客户端一致）。
-        current_score = self._get_score(auth)
+        # left_score 为字符串小数（如 "1474.35"），转 float 让通知层按
+        # TRAE/WorkBuddy 同款样式渲染"余额 **X积分**"。
+        current_score = self._to_score(self._get_score(auth))
         score_str = (
-            f"{current_score:g}" if isinstance(current_score, (int, float)) else "未知"
+            f"{current_score:g}" if current_score is not None else "未知"
         )
         if status == 0:
             return {
@@ -251,11 +253,40 @@ class ZhipuSigner(BaseSigner):
         try:
             headers = _sign_headers(device_id, token=token)
             resp = s.get(USER_INFO_URL, headers=headers, timeout=30)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("status") == 0:
-                    member = (data.get("result") or {}).get("member_info") or {}
-                    return member.get("left_score")
+            if resp.status_code != 200:
+                self.logger.warning(
+                    f"zhipu/{self.account.name} 查询积分 HTTP {resp.status_code}: "
+                    f"{resp.text[:80]}"
+                )
+                return None
+            data = resp.json()
+            if data.get("status") != 0:
+                self.logger.warning(
+                    f"zhipu/{self.account.name} 查询积分业务失败: "
+                    f"status={data.get('status')} {data.get('message')}"
+                )
+                return None
+            member = (data.get("result") or {}).get("member_info") or {}
+            left_score = member.get("left_score")
+            if left_score is None:
+                self.logger.warning(
+                    f"zhipu/{self.account.name} 查询积分响应缺少 left_score"
+                )
+            return left_score
         except Exception as e:
             self.logger.warning(f"zhipu/{self.account.name} 查询积分失败: {e}")
+        return None
+
+    @staticmethod
+    def _to_score(raw):
+        """left_score 兼容转数值：数字原样、字符串尝试 float、其余 None。"""
+        if isinstance(raw, bool):
+            return None
+        if isinstance(raw, (int, float)):
+            return raw
+        if isinstance(raw, str):
+            try:
+                return float(raw)
+            except ValueError:
+                return None
         return None

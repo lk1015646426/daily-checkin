@@ -52,7 +52,11 @@ class Notifier:
             status = "✅" if r.get("ok") else "❌"
             # 站点显示名：workbuddy -> WorkBuddy
             site = r["site"]
-            site_display = {"workbuddy": "WorkBuddy", "trae": "TRAE"}.get(site, site)
+            site_display = {
+                "workbuddy": "WorkBuddy",
+                "trae": "TRAE",
+                "zhipu": "智谱",
+            }.get(site, site)
             name = f"{site_display} {r['account']}"
 
             if not r.get("ok"):
