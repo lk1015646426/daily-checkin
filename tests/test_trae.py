@@ -161,8 +161,26 @@ class TraeAuthenticationTests(TraeTestBase):
             },
             clear=False,
         ):
-            with self.assertRaisesRegex(RuntimeError, "数字设备 ID"):
+            with self.assertRaisesRegex(RuntimeError, "官方设备 ID"):
                 signer.login()
+
+    def test_login_accepts_alphanumeric_bound_device_id(self):
+        # 方案 B 新设备注册（2026-09-09）：OAuth 分配的 BoundDeviceID
+        # 为字母数字格式（如 4jdpq0l0xljxdd），与旧纯数字并存。
+        token = make_jwt(1_800_000_000)
+        account = Account(
+            name="1780293",
+            token_env="TRAE1_TOKEN",
+            device_env="TRAE1_DEVICE_ID",
+        )
+        signer = self.make_signer(account)
+        with patch.dict(
+            os.environ,
+            {"TRAE1_TOKEN": token, "TRAE1_DEVICE_ID": "4jdpq0l0xljxdd"},
+            clear=False,
+        ):
+            auth = signer.login()
+        self.assertEqual("4jdpq0l0xljxdd", auth["device_id"])
 
     def test_headers_include_optional_official_device_context_only_when_present(self):
         signer = self.make_signer()

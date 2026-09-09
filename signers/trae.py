@@ -15,6 +15,18 @@ from .base import AuthExpired, BaseSigner
 
 DEFAULT_BASE_URL = "https://api.trae.cn"
 
+
+def _is_valid_device_id(device_id):
+    """官方设备 ID：旧纯数字（1132918838145530）或新版字母数字
+    （OAuth 注册分配的 BoundDeviceID，如 4jdpq0l0xljxdd）。
+    UUID（含连字符）等其它格式拒绝。"""
+    return (
+        isinstance(device_id, str)
+        and device_id.isascii()
+        and device_id.isalnum()
+        and 6 <= len(device_id) <= 32
+    )
+
 API_HEADERS = {
     "Content-Type": "application/json",
 }
@@ -130,10 +142,10 @@ class TraeSigner(BaseSigner):
             env_name = device_env or "该账号的 device_env"
             raise RuntimeError(f"缺少 TRAE 设备 ID：请设置环境变量 {env_name}")
         device_id = device_id.strip()
-        if not device_id.isascii() or not device_id.isdigit():
+        if not _is_valid_device_id(device_id):
             env_name = device_env or "该账号的 device_env"
             raise RuntimeError(
-                f"TRAE 设备 ID 必须是官方数字设备 ID：请重新同步 {env_name}"
+                f"TRAE 设备 ID 必须是官方设备 ID（数字或字母数字）：请重新同步 {env_name}"
             )
 
         device_brand = (
@@ -340,7 +352,7 @@ class TraeSigner(BaseSigner):
             return False
         if current_device_id:
             current_device_id = current_device_id.strip()
-            if not current_device_id.isascii() or not current_device_id.isdigit():
+            if not _is_valid_device_id(current_device_id):
                 return False
         if current_token and current_token != auth.get("token"):
             return False
