@@ -31,9 +31,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      # 每次运行使用唯一键保存最新认证；只从 v2 前缀恢复，避免复用旧版缓存。
+      # 每次运行使用唯一键；只从 v2 前缀恢复，避免复用旧版缓存。
+      # restore 与 save 分离：save 步骤 if: always()，个别账号签到失败（job exit 1）
+      # 也不丢 refresh 轮换链（tokens.json），否则断链后 401 只能重新种 Secret。
       - name: Restore token cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: store
           key: signin-token-cache-v2-${{ github.run_id }}
@@ -69,3 +71,10 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
         run: python main.py
+
+      - name: Save token cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: store
+          key: signin-token-cache-v2-${{ github.run_id }}
