@@ -78,14 +78,6 @@ class Config:
                 except ValueError as exc:
                     # 不记录 Secret 原文；旧账号配置仍可继续运行。
                     self.logger.warning(f"WorkBuddy 聚合 Secret 无效，回退旧账号配置: {exc}")
-            if key == "zhipu" and "ZHIPU_ACCOUNTS_JSON" in os.environ:
-                try:
-                    configured_accounts = _parse_zhipu_aggregate(
-                        os.environ.get("ZHIPU_ACCOUNTS_JSON", "")
-                    )
-                except ValueError as exc:
-                    # 不记录 Secret 原文；旧账号配置仍可继续运行。
-                    self.logger.warning(f"智谱聚合 Secret 无效，回退旧账号配置: {exc}")
             for a in configured_accounts:
                 if isinstance(a, Account):
                     name = a.name
@@ -182,7 +174,6 @@ class Config:
 
 
 _WORKBUDDY_KEY_RE = re.compile(r"^wb-[0-9a-f]{12,64}$")
-_ZHIPU_KEY_RE = re.compile(r"^zp-[0-9a-f]{12,64}$")
 
 
 def _safe_workbuddy_name(value):
@@ -227,51 +218,6 @@ def _parse_workbuddy_aggregate(raw):
                 name=_safe_workbuddy_name(entry.get("name")),
                 stable_key=key,
                 token=token.strip(),
-            )
-        )
-    return accounts
-
-
-def _parse_zhipu_aggregate(raw):
-    """解析切换工具同步的 ZHIPU_ACCOUNTS_JSON 聚合 Secret。
-
-    结构与 WorkBuddy 聚合一致：{version, accounts:[{key, name, access_token,
-    refresh_token}]}，key 为 zp- 前缀稳定账号 ID，access_token 为清言
-    （chatglm.cn）登录 JWT。refresh_token 当前仅存档，签到只用 access。
-    """
-    try:
-        payload = json.loads(raw)
-    except (TypeError, json.JSONDecodeError) as exc:
-        raise ValueError("JSON 解析失败") from exc
-    if (
-        not isinstance(payload, dict)
-        or type(payload.get("version")) is not int
-        or payload.get("version") != 1
-    ):
-        raise ValueError("版本无效")
-    entries = payload.get("accounts")
-    if not isinstance(entries, list):
-        raise ValueError("账号列表无效")
-    accounts = []
-    keys = set()
-    for entry in entries:
-        if not isinstance(entry, dict):
-            raise ValueError("账号项无效")
-        key = entry.get("key")
-        token = entry.get("access_token")
-        if not isinstance(key, str) or not _ZHIPU_KEY_RE.fullmatch(key):
-            raise ValueError("账号稳定键无效")
-        if key in keys:
-            raise ValueError("账号稳定键重复")
-        if not isinstance(token, str) or not token.strip():
-            raise ValueError("账号 access token 缺失")
-        keys.add(key)
-        accounts.append(
-            Account(
-                name=_safe_workbuddy_name(entry.get("name")),
-                stable_key=key,
-                token=token.strip(),
-                refresh_token=(entry.get("refresh_token") or "").strip() or None,
             )
         )
     return accounts

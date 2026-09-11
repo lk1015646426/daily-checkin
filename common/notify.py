@@ -55,7 +55,6 @@ class Notifier:
             site_display = {
                 "workbuddy": "WorkBuddy",
                 "trae": "TRAE",
-                "zhipu": "智谱",
             }.get(site, site)
             name = f"{site_display} {r['account']}"
 
