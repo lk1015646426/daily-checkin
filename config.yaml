@@ -56,7 +56,7 @@ sites:
       device_cpu: "AMD Ryzen 5 6600H with Radeon Graphics"
       os_info: "windows"
       os_version: "Windows 11 Home China"
-      client_version: "0.1.63"
+      client_version: "0.1.69"
     accounts:
       # token、数字 auth_device_id 和设备上下文均由切换工具从官方客户端快照同步。
       # 两个账号的认证信息不可混用，否则可能返回 401。

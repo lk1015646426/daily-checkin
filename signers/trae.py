@@ -9,7 +9,6 @@ import binascii
 import json
 import math
 import os
-import secrets
 import time
 
 from .base import AuthExpired, BaseSigner
@@ -29,27 +28,22 @@ def _is_valid_device_id(device_id):
     )
 
 
-# ---------- 9074 设备号自愈 ----------
-# 「当前参与用户太多，请稍后再试」(code=9074) 是设备检查未通过（不是真的限流）：
-# 服务端把这个设备号记住了，反复用它请求会越记越死。换一个全新设备号立刻就能过
-# 设备检查（对照实验：自造号 -> 9074；换新号 -> 通过）。见 52pojie 实测与项目
-# HANDOFF_DEVICE_ID_SOLUTION.md。
-DEVICE_ROTATE_BUSINESS_CODES = frozenset({9074})
-# 额外重试次数（首次 claim 之外）。每次重试都换一个全新设备号。
-DEVICE_ROTATE_MAX_ATTEMPTS = 2
-# 与 OAuth 分配的 BoundDeviceID 同形：14 位小写字母 + 数字。
-DEVICE_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
-DEVICE_ID_LENGTH = 14
-
-
-def _generate_device_id():
-    """生成一个格式合法的全新设备号（模仿 OAuth BoundDeviceID 形状）。
-
-    只保证形状合法，不保证服务端一定认；有效性由换号后的 claim 返回码判定。
-    """
-    return "".join(
-        secrets.choice(DEVICE_ID_ALPHABET) for _ in range(DEVICE_ID_LENGTH)
-    )
+# ---------- 9074 设备号诊断 ----------
+# 「当前参与用户太多，请稍后再试」(code=9074) 的真实含义是「设备检查未通过」，
+# 与限流无关。根因：x-device-id 必须是客户端在服务端真实注册过的设备号
+# （形如 iCubeAuthInfo://icube-dc:<数字ID>），自造号一定 9074。
+#
+# 重要实测结论（2026-09-29，已推翻早期判断）：
+#   * 随机生成一个"形状合法"的新设备号 —— 服务端照样 9074，换号无效。
+#     所以早期"换号自愈"的做法是伪自愈，已弃用。
+#   * 走完整 OAuth 登录也不会把设备号注册成可信设备。
+#   * 真号只能从「装过 Trae 客户端并登录过」的机器上取，见 storage.json 的
+#     iCubeAuthInfo://icube-dc:<数字ID> 键名（无需解密）。
+#   * 单设备（TraeWork/TraeCode 共用）一天只能签一次，换账号不重置。
+# 因此 9074 时不再瞎换号，而是在日志里给出可执行的修复指引。
+DEVICE_INVALID_BUSINESS_CODES = frozenset({9074})
+# 9095 = 当前设备今日已经签到（设备维度限额，非失败）。
+ALREADY_CHECKED_IN_CODE = 9095
 
 
 API_HEADERS = {
@@ -700,70 +694,69 @@ class TraeSigner(BaseSigner):
                 False,
             )
 
-        # claim：命中设备类业务错误（9074）时，换一个全新设备号重签。
-        # 设备号被服务端记住后重登重签都不管用，但换号能立刻过设备检查。
+        # claim：直接请求一次。命中 9074 时不做"换号重试"（实测无效），
+        # 改为输出可执行的修复指引；命中 9095 视为设备限额、正常跳过。
         claim_auth = auth
         claim_headers = headers
-        rotations = 0
-        while True:
-            try:
-                claim_response, claim_data = self._post_json(
-                    f"{base}/trae/api/v2/ug/checkin_credits/claim",
-                    claim_headers,
-                    {},
-                )
-            except (TraeHttpError, TraeBusinessError) as error:
-                return self._response_error_result(
-                    claim_auth,
-                    "claim",
-                    error,
-                    "签到失败",
-                    True,
-                )
-            claim_error = self._business_error(claim_data)
-            if not claim_error:
-                return self._success_result(
-                    base,
-                    claim_headers,
-                    claim_auth,
-                    credits,
-                    "本次领取成功",
-                    "claim",
-                    claim_data,
-                    claim_response,
-                    True,
-                )
+        try:
+            claim_response, claim_data = self._post_json(
+                f"{base}/trae/api/v2/ug/checkin_credits/claim",
+                claim_headers,
+                {},
+            )
+        except (TraeHttpError, TraeBusinessError) as error:
+            return self._response_error_result(
+                claim_auth,
+                "claim",
+                error,
+                "签到失败",
+                True,
+            )
+        claim_error = self._business_error(claim_data)
+        if not claim_error:
+            return self._success_result(
+                base,
+                claim_headers,
+                claim_auth,
+                credits,
+                "本次领取成功",
+                "claim",
+                claim_data,
+                claim_response,
+                True,
+            )
 
-            if "已签到" in claim_error or "already" in claim_error.lower():
-                return self._success_result(
-                    base,
-                    claim_headers,
-                    claim_auth,
-                    credits,
-                    "今日已签到（领取接口确认）",
-                    "claim",
-                    claim_data,
-                    claim_response,
-                    True,
-                )
+        code = claim_data.get("code")
 
-            code = claim_data.get("code")
-            if (
-                code in DEVICE_ROTATE_BUSINESS_CODES
-                and rotations < DEVICE_ROTATE_MAX_ATTEMPTS
-            ):
-                rotations += 1
-                self.logger.warning(
-                    f"trae/{self.account.name} 命中设备类业务错误 code={code}，"
-                    f"换全新设备号重签（第 {rotations} 次）"
-                )
-                claim_auth = {**auth, "device_id": _generate_device_id()}
-                claim_headers = self._headers(claim_auth)
-                continue
+        # 9095 = 设备维度限额（"当前设备今日已经签到"）。注意原文是"已经签到"，
+        # 中间夹了"经"字，不能只匹配"已签到"。设备限额不是失败，正常跳过即可。
+        if (
+            code == ALREADY_CHECKED_IN_CODE
+            or "已签到" in claim_error
+            or "已经签到" in claim_error
+            or "already" in claim_error.lower()
+        ):
+            return self._success_result(
+                base,
+                claim_headers,
+                claim_auth,
+                credits,
+                "今日已签到（领取接口确认）",
+                "claim",
+                claim_data,
+                claim_response,
+                True,
+            )
 
-            msg = f"签到失败: {claim_error}"
-            if rotations:
-                msg += f"（已换设备号重签 {rotations} 次仍未通过）"
+        # 9074 = 设备号未通过服务端校验。换号/重登都无效，只能换成真号。
+        if code in DEVICE_INVALID_BUSINESS_CODES:
+            msg = (
+                "签到失败: 设备号未通过服务端校验（9074）。"
+                f"当前 device_id={claim_auth.get('device_id')!r} 大概率不是真号；"
+                "请从装过 Trae 客户端并登录过的机器上取 storage.json 的 "
+                "iCubeAuthInfo://icube-dc:<数字ID> 键名，更新本账号的 "
+                "*_DEVICE_ID Secret 后重试。"
+            )
             return {
                 "ok": False,
                 "points": 0,
@@ -776,3 +769,16 @@ class TraeSigner(BaseSigner):
                     claim_attempted=True,
                 ),
             }
+
+        return {
+            "ok": False,
+            "points": 0,
+            "msg": f"签到失败: {claim_error}",
+            **self._diagnostic(
+                claim_auth,
+                "claim",
+                data=claim_data,
+                response=claim_response,
+                claim_attempted=True,
+            ),
+        }

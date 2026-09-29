@@ -291,23 +291,33 @@ class TraeCreditsTests(TraeTestBase):
         self.assertNotIn(token, repr(result))
         self.assertNotIn("secret-device", repr(result))
 
-    def test_claim_business_code_9074_rotates_device_id_and_recovers(self):
+    def test_claim_code_9095_is_treated_as_already_checked_in(self):
+        """9095（当前设备今日已经签到）应视为成功跳过，而不是失败。
+
+        关键：服务端原文是"当前设备今日已经签到"，中间夹了"经"字，
+        旧代码只匹配"已签到"会漏判，把正常限额当成失败让 CI 变红。
+        """
         token = make_jwt(int(time.time()) + 3600)
         session = QueueSession(
             [
                 FakeResponse(
                     {"code": 0, "checked_in": False, "credits": 200, "enable": True}
                 ),
-                FakeResponse({"code": 9074, "message": "当前参与用户太多，请稍后再试"}),
-                FakeResponse({"code": 0}),
+                FakeResponse(
+                    {
+                        "code": 9095,
+                        "message": "当前设备今日已经签到，请明日再来哦～",
+                    }
+                ),
+                # _success_result 会再查一次余额
                 FakeResponse(
                     {
                         "user_entitlement_pack_list": [
                             {
                                 "entitlement_base_info": {
-                                    "quota": {"credits_limit": 2000}
+                                    "quota": {"credits_limit": 5000}
                                 },
-                                "usage": {"credits_amount": 400},
+                                "usage": {"credits_amount": 1200},
                             }
                         ]
                     }
@@ -316,64 +326,44 @@ class TraeCreditsTests(TraeTestBase):
         )
         signer = self.make_signer(session=session)
 
-        with patch(
-            "signers.trae._generate_device_id", return_value="rotated0000010"
-        ) as gen:
-            result = signer.checkin(
-                {"token": token, "device_id": "1132918838145530"}
-            )
+        result = signer.checkin({"token": token, "device_id": "1132918838145530"})
 
-        self.assertEqual(1, gen.call_count)
         self.assertTrue(result["ok"])
-        self.assertEqual(200, result["awarded"])
-        self.assertEqual(1600, result["points"])
-        self.assertTrue(result["claim_attempted"])
-        self.assertEqual(4, len(session.calls))
+        self.assertIn("已签到", result["msg"])
+        self.assertEqual("claim", result["stage"])
+        # 不应触发换设备号重签（9095 不是设备无效）：status + claim + usage = 3
+        self.assertEqual(3, len(session.calls))
         self.assertTrue(session.calls[1][0].endswith("/claim"))
-        self.assertTrue(session.calls[2][0].endswith("/claim"))
-        self.assertEqual(
-            "1132918838145530", session.calls[1][1]["headers"]["x-device-id"]
-        )
-        self.assertEqual(
-            "rotated0000010", session.calls[2][1]["headers"]["x-device-id"]
-        )
-        self.assertNotIn("1132918838145530", repr(result))
 
-    def test_claim_business_code_9074_exhausts_rotation_budget(self):
+    def test_claim_code_9074_reports_actionable_device_guidance(self):
+        """9074 不再瞎换号（实测无效），只请求一次并给出可执行的修复指引。"""
         token = make_jwt(int(time.time()) + 3600)
-        frequent = {"code": 9074, "message": "当前参与用户太多，请稍后再试"}
         session = QueueSession(
             [
                 FakeResponse(
                     {"code": 0, "checked_in": False, "credits": 200, "enable": True}
                 ),
-                FakeResponse(dict(frequent)),
-                FakeResponse(dict(frequent)),
-                FakeResponse(dict(frequent)),
+                FakeResponse(
+                    {"code": 9074, "message": "当前参与用户太多，请稍后再试"}
+                ),
             ]
         )
         signer = self.make_signer(session=session)
 
-        with patch(
-            "signers.trae._generate_device_id",
-            side_effect=["rotated0000001", "rotated0000002"],
-        ):
-            result = signer.checkin(
-                {"token": token, "device_id": "1132918838145530"}
-            )
+        result = signer.checkin({"token": token, "device_id": "4jdpq0l0xljxdd"})
 
         self.assertFalse(result["ok"])
         self.assertEqual("claim", result["stage"])
         self.assertEqual(9074, result["business_code"])
         self.assertTrue(result["claim_attempted"])
-        # status + 首次 claim + 2 次换号重试
-        self.assertEqual(4, len(session.calls))
-        self.assertIn("已换设备号重签 2 次", result["msg"])
-        self.assertEqual(
-            "rotated0000002", session.calls[3][1]["headers"]["x-device-id"]
-        )
+        # status + 单次 claim（不再重试）
+        self.assertEqual(2, len(session.calls))
+        # 指引里要点名 Secret 与 storage.json 的取值位置
+        self.assertIn("9074", result["msg"])
+        self.assertIn("iCubeAuthInfo://icube-dc", result["msg"])
+        self.assertIn("_DEVICE_ID", result["msg"])
 
-    def test_claim_non_device_business_code_does_not_rotate(self):
+    def test_claim_non_device_business_code_has_no_device_guidance(self):
         token = make_jwt(int(time.time()) + 3600)
         session = QueueSession(
             [
@@ -385,24 +375,25 @@ class TraeCreditsTests(TraeTestBase):
         )
         signer = self.make_signer(session=session)
 
-        with patch("signers.trae._generate_device_id") as gen:
-            result = signer.checkin(
-                {"token": token, "device_id": "1132918838145530"}
-            )
+        result = signer.checkin(
+            {"token": token, "device_id": "1132918838145530"}
+        )
 
         self.assertFalse(result["ok"])
         self.assertEqual(500, result["business_code"])
-        self.assertEqual(0, gen.call_count)
         self.assertEqual(2, len(session.calls))
-        self.assertNotIn("已换设备号重签", result["msg"])
+        self.assertNotIn("iCubeAuthInfo://icube-dc", result["msg"])
 
-    def test_generated_device_id_is_always_shape_valid(self):
-        from signers.trae import _generate_device_id, _is_valid_device_id
+    def test_read_device_id_from_storage_key_shape(self):
+        """真号藏在 storage.json 的键名里，形如 iCubeAuthInfo://icube-dc:<数字ID>。"""
+        from signers.trae import _is_valid_device_id
 
-        seen = {_generate_device_id() for _ in range(200)}
-        self.assertEqual(200, len(seen))
-        for device_id in seen:
-            self.assertTrue(_is_valid_device_id(device_id), device_id)
+        # 本机实测值：16 位纯数字
+        self.assertTrue(_is_valid_device_id("1132918838145530"))
+        # 旧版 OAuth 分配的字母数字号也是合法形状
+        self.assertTrue(_is_valid_device_id("4jdpq0l0xljxdd"))
+        # UUID 形状不是签到口径的设备号
+        self.assertFalse(_is_valid_device_id("d6b8ac2e-f4d1-496d-a9a6-c9c7b4bd23e3"))
 
     def test_parse_credits_usage_sums_remaining_finite_packs(self):
         usage = TraeSigner._parse_credits_usage(
