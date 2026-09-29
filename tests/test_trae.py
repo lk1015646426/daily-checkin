@@ -291,6 +291,119 @@ class TraeCreditsTests(TraeTestBase):
         self.assertNotIn(token, repr(result))
         self.assertNotIn("secret-device", repr(result))
 
+    def test_claim_business_code_9074_rotates_device_id_and_recovers(self):
+        token = make_jwt(int(time.time()) + 3600)
+        session = QueueSession(
+            [
+                FakeResponse(
+                    {"code": 0, "checked_in": False, "credits": 200, "enable": True}
+                ),
+                FakeResponse({"code": 9074, "message": "当前参与用户太多，请稍后再试"}),
+                FakeResponse({"code": 0}),
+                FakeResponse(
+                    {
+                        "user_entitlement_pack_list": [
+                            {
+                                "entitlement_base_info": {
+                                    "quota": {"credits_limit": 2000}
+                                },
+                                "usage": {"credits_amount": 400},
+                            }
+                        ]
+                    }
+                ),
+            ]
+        )
+        signer = self.make_signer(session=session)
+
+        with patch(
+            "signers.trae._generate_device_id", return_value="rotated0000010"
+        ) as gen:
+            result = signer.checkin(
+                {"token": token, "device_id": "1132918838145530"}
+            )
+
+        self.assertEqual(1, gen.call_count)
+        self.assertTrue(result["ok"])
+        self.assertEqual(200, result["awarded"])
+        self.assertEqual(1600, result["points"])
+        self.assertTrue(result["claim_attempted"])
+        self.assertEqual(4, len(session.calls))
+        self.assertTrue(session.calls[1][0].endswith("/claim"))
+        self.assertTrue(session.calls[2][0].endswith("/claim"))
+        self.assertEqual(
+            "1132918838145530", session.calls[1][1]["headers"]["x-device-id"]
+        )
+        self.assertEqual(
+            "rotated0000010", session.calls[2][1]["headers"]["x-device-id"]
+        )
+        self.assertNotIn("1132918838145530", repr(result))
+
+    def test_claim_business_code_9074_exhausts_rotation_budget(self):
+        token = make_jwt(int(time.time()) + 3600)
+        frequent = {"code": 9074, "message": "当前参与用户太多，请稍后再试"}
+        session = QueueSession(
+            [
+                FakeResponse(
+                    {"code": 0, "checked_in": False, "credits": 200, "enable": True}
+                ),
+                FakeResponse(dict(frequent)),
+                FakeResponse(dict(frequent)),
+                FakeResponse(dict(frequent)),
+            ]
+        )
+        signer = self.make_signer(session=session)
+
+        with patch(
+            "signers.trae._generate_device_id",
+            side_effect=["rotated0000001", "rotated0000002"],
+        ):
+            result = signer.checkin(
+                {"token": token, "device_id": "1132918838145530"}
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("claim", result["stage"])
+        self.assertEqual(9074, result["business_code"])
+        self.assertTrue(result["claim_attempted"])
+        # status + 首次 claim + 2 次换号重试
+        self.assertEqual(4, len(session.calls))
+        self.assertIn("已换设备号重签 2 次", result["msg"])
+        self.assertEqual(
+            "rotated0000002", session.calls[3][1]["headers"]["x-device-id"]
+        )
+
+    def test_claim_non_device_business_code_does_not_rotate(self):
+        token = make_jwt(int(time.time()) + 3600)
+        session = QueueSession(
+            [
+                FakeResponse(
+                    {"code": 0, "checked_in": False, "credits": 200, "enable": True}
+                ),
+                FakeResponse({"code": 500, "message": "操作太过频繁啦，请稍后尝试"}),
+            ]
+        )
+        signer = self.make_signer(session=session)
+
+        with patch("signers.trae._generate_device_id") as gen:
+            result = signer.checkin(
+                {"token": token, "device_id": "1132918838145530"}
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(500, result["business_code"])
+        self.assertEqual(0, gen.call_count)
+        self.assertEqual(2, len(session.calls))
+        self.assertNotIn("已换设备号重签", result["msg"])
+
+    def test_generated_device_id_is_always_shape_valid(self):
+        from signers.trae import _generate_device_id, _is_valid_device_id
+
+        seen = {_generate_device_id() for _ in range(200)}
+        self.assertEqual(200, len(seen))
+        for device_id in seen:
+            self.assertTrue(_is_valid_device_id(device_id), device_id)
+
     def test_parse_credits_usage_sums_remaining_finite_packs(self):
         usage = TraeSigner._parse_credits_usage(
             {

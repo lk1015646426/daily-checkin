@@ -9,6 +9,7 @@ import binascii
 import json
 import math
 import os
+import secrets
 import time
 
 from .base import AuthExpired, BaseSigner
@@ -26,6 +27,30 @@ def _is_valid_device_id(device_id):
         and device_id.isalnum()
         and 6 <= len(device_id) <= 32
     )
+
+
+# ---------- 9074 设备号自愈 ----------
+# 「当前参与用户太多，请稍后再试」(code=9074) 是设备检查未通过（不是真的限流）：
+# 服务端把这个设备号记住了，反复用它请求会越记越死。换一个全新设备号立刻就能过
+# 设备检查（对照实验：自造号 -> 9074；换新号 -> 通过）。见 52pojie 实测与项目
+# HANDOFF_DEVICE_ID_SOLUTION.md。
+DEVICE_ROTATE_BUSINESS_CODES = frozenset({9074})
+# 额外重试次数（首次 claim 之外）。每次重试都换一个全新设备号。
+DEVICE_ROTATE_MAX_ATTEMPTS = 2
+# 与 OAuth 分配的 BoundDeviceID 同形：14 位小写字母 + 数字。
+DEVICE_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
+DEVICE_ID_LENGTH = 14
+
+
+def _generate_device_id():
+    """生成一个格式合法的全新设备号（模仿 OAuth BoundDeviceID 形状）。
+
+    只保证形状合法，不保证服务端一定认；有效性由换号后的 claim 返回码判定。
+    """
+    return "".join(
+        secrets.choice(DEVICE_ID_ALPHABET) for _ in range(DEVICE_ID_LENGTH)
+    )
+
 
 API_HEADERS = {
     "Content-Type": "application/json",
@@ -675,56 +700,79 @@ class TraeSigner(BaseSigner):
                 False,
             )
 
-        try:
-            claim_response, claim_data = self._post_json(
-                f"{base}/trae/api/v2/ug/checkin_credits/claim",
-                headers,
-                {},
-            )
-        except (TraeHttpError, TraeBusinessError) as error:
-            return self._response_error_result(
-                auth,
-                "claim",
-                error,
-                "签到失败",
-                True,
-            )
-        claim_error = self._business_error(claim_data)
-        if not claim_error:
-            return self._success_result(
-                base,
-                headers,
-                auth,
-                credits,
-                "本次领取成功",
-                "claim",
-                claim_data,
-                claim_response,
-                True,
-            )
+        # claim：命中设备类业务错误（9074）时，换一个全新设备号重签。
+        # 设备号被服务端记住后重登重签都不管用，但换号能立刻过设备检查。
+        claim_auth = auth
+        claim_headers = headers
+        rotations = 0
+        while True:
+            try:
+                claim_response, claim_data = self._post_json(
+                    f"{base}/trae/api/v2/ug/checkin_credits/claim",
+                    claim_headers,
+                    {},
+                )
+            except (TraeHttpError, TraeBusinessError) as error:
+                return self._response_error_result(
+                    claim_auth,
+                    "claim",
+                    error,
+                    "签到失败",
+                    True,
+                )
+            claim_error = self._business_error(claim_data)
+            if not claim_error:
+                return self._success_result(
+                    base,
+                    claim_headers,
+                    claim_auth,
+                    credits,
+                    "本次领取成功",
+                    "claim",
+                    claim_data,
+                    claim_response,
+                    True,
+                )
 
-        if "已签到" in claim_error or "already" in claim_error.lower():
-            return self._success_result(
-                base,
-                headers,
-                auth,
-                credits,
-                "今日已签到（领取接口确认）",
-                "claim",
-                claim_data,
-                claim_response,
-                True,
-            )
+            if "已签到" in claim_error or "already" in claim_error.lower():
+                return self._success_result(
+                    base,
+                    claim_headers,
+                    claim_auth,
+                    credits,
+                    "今日已签到（领取接口确认）",
+                    "claim",
+                    claim_data,
+                    claim_response,
+                    True,
+                )
 
-        return {
-            "ok": False,
-            "points": 0,
-            "msg": f"签到失败: {claim_error}",
-            **self._diagnostic(
-                auth,
-                "claim",
-                data=claim_data,
-                response=claim_response,
-                claim_attempted=True,
-            ),
-        }
+            code = claim_data.get("code")
+            if (
+                code in DEVICE_ROTATE_BUSINESS_CODES
+                and rotations < DEVICE_ROTATE_MAX_ATTEMPTS
+            ):
+                rotations += 1
+                self.logger.warning(
+                    f"trae/{self.account.name} 命中设备类业务错误 code={code}，"
+                    f"换全新设备号重签（第 {rotations} 次）"
+                )
+                claim_auth = {**auth, "device_id": _generate_device_id()}
+                claim_headers = self._headers(claim_auth)
+                continue
+
+            msg = f"签到失败: {claim_error}"
+            if rotations:
+                msg += f"（已换设备号重签 {rotations} 次仍未通过）"
+            return {
+                "ok": False,
+                "points": 0,
+                "msg": msg,
+                **self._diagnostic(
+                    claim_auth,
+                    "claim",
+                    data=claim_data,
+                    response=claim_response,
+                    claim_attempted=True,
+                ),
+            }
