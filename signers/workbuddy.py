@@ -12,16 +12,46 @@ WorkBuddy（腾讯云 AI 代码助手）的每日签到只能在桌面客户端�
 签到 API：
 - 执行签到：POST https://copilot.tencent.com/v2/billing/meter/daily-checkin
 - 查签到活动状态：POST https://copilot.tencent.com/v2/billing/meter/checkin-activity-status
-- 查账号资源余额：POST https://copilot.tencent.com/v2/billing/meter/get-user-resource
+- 查当前可用积分：POST https://copilot.tencent.com/billing/meter/get-user-resource-summary
 """
 import json
 import os
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from .base import AuthExpired, BaseSigner
 
 CHECKIN_URL = "https://copilot.tencent.com/v2/billing/meter/daily-checkin"
 STATUS_URL = "https://copilot.tencent.com/v2/billing/meter/checkin-activity-status"
-RESOURCE_URL = "https://copilot.tencent.com/v2/billing/meter/get-user-resource"
+CREDITS_URL = "https://copilot.tencent.com/billing/meter/get-user-resource-summary"
+
+
+def parse_available_credits(payload):
+    """采用官方汇总的周期剩余额度；Packages 与 CreditGroups 不重复相加。
+
+    契约参考 L0NE-6/WorkBuddy-Daily 的 queryCredits；不再按旧资源包类型排除额度。
+    返回 None 表示未查询到；完整且为空的套餐列表才表示余额为零。
+    """
+    if not isinstance(payload, dict) or type(payload.get("code")) is not int or payload["code"] != 0:
+        return None
+    data = payload.get("data")
+    packages = data.get("Packages") if isinstance(data, dict) else None
+    if not isinstance(packages, list):
+        return None
+    total = Decimal(0)
+    try:
+        for package in packages:
+            if not isinstance(package, dict):
+                return None
+            raw = package.get("CycleRemainCapacity")
+            if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):
+                return None
+            remain = Decimal(str(raw))
+            if not remain.is_finite():
+                return None
+            total += max(Decimal(0), remain)
+        return float(total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, ValueError, OverflowError):
+        return None
 
 # 签到 API 附加请求头（session 已有 UA / Accept）
 API_HEADERS = {
@@ -130,7 +160,7 @@ class WorkBuddySigner(BaseSigner):
         today_credit = activity.get("today_credit", 0) if activity else 0
         streak = activity.get("streak_days", 0) if activity else 0
         # 积分格式化：整数不带小数点，非整数保留2位
-        credits_str = f"{total_credits:g}" if isinstance(total_credits, float) else str(total_credits)
+        credits_text = f"{total_credits:g}积分" if isinstance(total_credits, (int, float)) else "未查询到"
 
         # code=0 签到成功
         if code == 0:
@@ -140,7 +170,7 @@ class WorkBuddySigner(BaseSigner):
                 "points_unit": "积分",
                 "awarded": today_credit,
                 "streak": streak,
-                "msg": f"签到成功 +{today_credit}积分，连续{streak}天，余额{credits_str}积分",
+                "msg": f"签到成功 +{today_credit}积分，连续{streak}天，余额{credits_text}",
             }
 
         # code=10001 "今天已签到，请明天再来" 也算成功
@@ -151,7 +181,7 @@ class WorkBuddySigner(BaseSigner):
                 "points_unit": "积分",
                 "awarded": today_credit,
                 "streak": streak,
-                "msg": f"今日已签到 +{today_credit}积分，连续{streak}天，余额{credits_str}积分",
+                "msg": f"今日已签到 +{today_credit}积分，连续{streak}天，余额{credits_text}",
             }
 
         return {"ok": False, "points": 0, "msg": msg or f"签到失败 (code={code})"}
@@ -170,41 +200,16 @@ class WorkBuddySigner(BaseSigner):
         return {}
 
     def _get_total_credits(self, headers):
-        """查询账号实际可用积分余额（有效裂变包的剩余之和）。
-
-        资源包分两类：
-        - CapacityType=4：体验版（500积分试用包），不算真实余额
-        - CapacityType=1：裂变包（签到/活动获得），才是真实积分
-        只统计 CapacityType=1 且 Status=0（有效未过期）的裂变包。
-        用 CapacityRemainPrecise 字符串字段获取小数精度（如 2.96）。
-        """
+        """查询官方汇总余额，包含服务端计入的基础、购买和活动积分。"""
         s = self.session
         try:
-            resp = s.post(RESOURCE_URL, json={}, headers=headers, timeout=30)
+            resp = s.post(CREDITS_URL, json={}, headers=headers, timeout=30)
             if resp.status_code == 200:
                 data = resp.json()
-                accounts = (
-                    data.get("data", {})
-                    .get("Response", {})
-                    .get("Data", {})
-                    .get("Accounts", [])
-                )
-                total = 0.0
-                for pkg in accounts:
-                    # 只统计裂变包（Type=1），排除体验版（Type=4）
-                    if pkg.get("CapacityType") != 1:
-                        continue
-                    if pkg.get("Status") != 0:
-                        continue
-                    precise = pkg.get("CapacityRemainPrecise")
-                    if precise:
-                        try:
-                            total += float(precise)
-                        except (ValueError, TypeError):
-                            total += pkg.get("CapacityRemain", 0)
-                    else:
-                        total += pkg.get("CapacityRemain", 0)
-                return round(total, 2)
+                total = parse_available_credits(data)
+                if total is not None:
+                    return total
+            self.logger.warning(f"WorkBuddy/{self.account.name} 积分汇总未返回有效余额")
         except Exception as e:
-            self.logger.warning(f"WorkBuddy/{self.account.name} 查询资源余额失败: {e}")
-        return 0
+            self.logger.warning(f"WorkBuddy/{self.account.name} 查询积分汇总失败: {type(e).__name__}")
+        return None

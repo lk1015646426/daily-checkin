@@ -157,6 +157,8 @@ python main.py
 
 仅已开启自动签到的账号参与。首次使用需在桌面开启活动总开关，点击「保存并同步云端」。未提供活动配置时保持关闭，旧版多账号 Secret 仍可使用。配置以 `WORKBUDDY_ACCOUNTS_JSON` 的可选顶层 `activities` 字段保存，不添加 refresh token 或完整认证文件。
 
+积分余额采用官方 `get-user-resource-summary` 接口的 `Packages[].CycleRemainCapacity` 合计，包含官方计入的基础、购买和活动积分，最多显示两位小数；不再按旧资源包类型排除体验版的 500 积分。活动执行后重新查询余额，不把领奖金额自行加到旧余额上。无法查询时显示「余额未查询到」，不使用 0 冒充查询结果。桌面 WorkBuddy 页面打开时每分钟更新，并显示查询时间。
+
 ```json
 {"enabled":true,"compensation":true,"tasks":true,"travel":true,"expiryDays":7}
 ```

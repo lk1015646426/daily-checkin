@@ -5,7 +5,8 @@ from unittest.mock import Mock, call, patch
 
 from common.config import Account, Config
 from main import account_matches_filter, parse_account_filter
-from signers.workbuddy import WorkBuddySigner
+from signers.workbuddy import WorkBuddySigner, parse_available_credits
+from common.notify import Notifier
 
 
 def workbuddy_config():
@@ -207,6 +208,70 @@ class WorkBuddyAccountConfigTests(unittest.TestCase):
         signer.checkin.assert_called_once_with(
             {"token": "new-token", "expires_at": None}
         )
+
+
+class WorkBuddyCreditsTests(unittest.TestCase):
+    def test_official_summary_includes_trial_and_addons_once(self):
+        payload = {"code": 0, "data": {"Packages": [
+            {"CycleRemainCapacity": "3500"}, {"CycleRemainCapacity": "500"},
+            {"CycleRemainCapacity": "1000"}],
+            "TotalCredits": "5000", "CreditGroups": [{"CycleRemainCapacity": "5000"}]}}
+        self.assertEqual(5000, parse_available_credits(payload))
+
+    def test_summary_uses_current_remaining_not_total_and_preserves_precision(self):
+        payload = {"code": 0, "data": {"Packages": [
+            {"CycleRemainCapacity": "2932.12000031", "CycleTotalCapacity": "3400"},
+            {"CycleRemainCapacity": "500", "CycleTotalCapacity": "500"}]}}
+        self.assertEqual(3432.12, parse_available_credits(payload))
+
+    def test_zero_and_unknown_are_different(self):
+        self.assertEqual(0, parse_available_credits({"code": 0, "data": {"Packages": []}}))
+        self.assertEqual(0, parse_available_credits({"code": 0, "data": {"Packages": [
+            {"CycleRemainCapacity": "0", "CycleTotalCapacity": "500"}]}}))
+        for payload in [{}, {"code": 401}, {"code": 0, "data": {}},
+                        {"code": 0, "data": {"Packages": [{"CycleRemainCapacity": True}]}},
+                        {"code": 0, "data": {"Packages": [{"CycleRemainCapacity": "NaN"}]}}]:
+            self.assertIsNone(parse_available_credits(payload))
+
+    def test_query_failure_does_not_invent_zero_balance(self):
+        session = Mock()
+        session.post.side_effect = TimeoutError()
+        signer = WorkBuddySigner(Mock(key="workbuddy"), Account(name="测试"), session, Mock(), Mock(), Mock())
+        self.assertIsNone(signer._get_total_credits({}))
+
+    def test_rewards_finish_before_balance_is_queried(self):
+        from main import run_workbuddy_activities
+        events = []
+        signer = Mock()
+        signer.login.return_value = {"token": "secret"}
+        signer._get_total_credits.side_effect = lambda headers: events.append("balance") or 600
+        activity = {"ok": True, "summary": "已领奖", "enabled": True}
+        with patch("main.ActivityRunner") as runner:
+            runner.return_value.run.side_effect = lambda: events.append("activity") or activity
+            result = {"points": 500}
+            run_workbuddy_activities(signer, result, {"enabled": True})
+        self.assertEqual(["activity", "balance"], events)
+        self.assertEqual(600, result["points"])
+
+    def test_unknown_balance_is_explicit_in_notification(self):
+        text = Notifier.format_summary([{"site": "workbuddy", "account": "测试", "ok": True,
+            "points": None, "points_unit": "积分", "awarded": 100}])
+        self.assertIn("余额未查询到", text)
+        self.assertNotIn("余额 **0", text)
+
+    def test_post_activity_balance_failure_is_reported_as_partial_failure(self):
+        from main import run_workbuddy_activities
+        signer = Mock()
+        signer.login.return_value = {"token": "secret"}
+        signer._get_total_credits.return_value = None
+        activity = {"ok": True, "summary": "活动检查完成", "enabled": True, "errors": []}
+        with patch("main.ActivityRunner") as runner:
+            runner.return_value.run.return_value = activity
+            result = {}
+            run_workbuddy_activities(signer, result, {"enabled": True})
+        self.assertIsNone(result["points"])
+        self.assertFalse(result["activities"]["ok"])
+        self.assertIn("余额未查询到", result["activity_summary"])
 
 
 if __name__ == "__main__":

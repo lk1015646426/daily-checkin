@@ -60,6 +60,23 @@ def _diagnostic_suffix(result):
     return f" [{', '.join(fields)}]" if fields else ""
 
 
+def run_workbuddy_activities(signer, result, policy):
+    token = signer.login()["token"]
+    activity = ActivityRunner(token, policy).run()
+    result["activities"] = activity
+    result["activity_summary"] = activity["summary"]
+    # 活动可能增加余额：使用完成后的官方汇总，不能沿用签到时的旧值或累加猜测。
+    result["points"] = signer._get_total_credits(signer._auth_headers({"token": token}))
+    result["points_unit"] = "积分"
+    if result["points"] is None:
+        message = "活动后积分余额未查询到，下次检查会重试"
+        activity.setdefault("errors", []).append(message)
+        activity["ok"] = False
+        activity["summary"] += "\n⚠️ " + message
+        result["activity_summary"] = activity["summary"]
+    return activity
+
+
 def main():
     logger = setup_logger()
     cfg = Config.load("config.yaml", logger)
@@ -102,10 +119,7 @@ def main():
                 else:
                     res = signer.run()
                 if site.key == "workbuddy" and res["ok"] and activity_policy["enabled"]:
-                    token = signer.login()["token"]
-                    activity = ActivityRunner(token, activity_policy).run()
-                    res["activities"] = activity
-                    res["activity_summary"] = activity["summary"]
+                    activity = run_workbuddy_activities(signer, res, activity_policy)
                     if activities_only:
                         res["ok"] = activity["ok"]
                         res["msg"] = "活动检查完成" if activity["ok"] else "部分活动未完成，请查看明细"

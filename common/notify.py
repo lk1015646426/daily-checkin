@@ -78,6 +78,8 @@ class Notifier:
                     parts.append(f"+{awarded}积分")
 
             # 余额/总额度（加粗醒目）
+            if pts is None and unit == "积分":
+                parts.append("余额未查询到")
             if isinstance(pts, (int, float)) and pts is not None:
                 if unit == "USD":
                     parts.append(f"总额度 **${pts:.2f}**")
