@@ -116,6 +116,24 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(1, runner.result["departed"])
         self.assertEqual("traveling", runner.result["travel"]["state"])
 
+    def test_missing_buddy_is_a_todo_without_invalid_accept_requests(self):
+        tasks = [{"task_code": "first_buddy", "accept_status": "not_accepted"},
+                 {"task_code": "new", "accept_status": "not_accepted"}]
+        http = FakeHTTP([{"tasks": tasks}, {"buddy": None}])
+        runner = ActivityRunner("secret", policy(), http)
+        runner.run_tasks()
+        self.assertEqual([], runner.result["errors"])
+        self.assertTrue(runner.result["notices"])
+        self.assertFalse(any(call[0] == "POST" for call in http.calls))
+
+    def test_unowned_buddy_never_attempts_depart(self):
+        http = FakeHTTP([{"state": "idle", "buddy_id": 0}])
+        runner = ActivityRunner("secret", policy(), http)
+        runner.run_travel()
+        self.assertEqual(1, len(http.calls))
+        self.assertEqual("unowned", runner.result["travel"]["state"])
+        self.assertEqual([], runner.result["errors"])
+
     def test_compensation_already_claimed_never_writes_claim(self):
         http = FakeHTTP([{"active": True, "claimed": True, "credit_num": 500}])
         runner = ActivityRunner("secret", policy(), http)

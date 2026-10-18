@@ -159,8 +159,18 @@ class ActivityRunner:
 
     def run_tasks(self):
         tasks = self.task_list()
+        first_buddy = next((task for task in tasks if task.get("task_code") == "first_buddy"), None)
+        missing_buddy = False
+        if first_buddy is not None and first_buddy.get("accept_status") != "claimed":
+            buddy = self.request("GET", GROWTH + "/buddy/info")
+            if "buddy" not in buddy:
+                raise ActivityError("Buddy 信息无法识别，未自动接取任务")
+            missing_buddy = buddy["buddy"] is None
+            if missing_buddy:
+                self.result["notices"].append("请先在官方成长中心领取一只 Buddy，再接取其余成长任务")
         pending = [t for t in tasks if t.get("accept_status") == "not_accepted"
-                   and task_available(t, self.now) and TASK_CODE.fullmatch(str(t.get("task_code", "")))]
+                   and not missing_buddy and task_available(t, self.now)
+                   and TASK_CODE.fullmatch(str(t.get("task_code", "")))]
         for offset in range(0, len(pending), 20):
             batch = pending[offset:offset + 20]
             codes = [t["task_code"] for t in batch]
@@ -214,6 +224,10 @@ class ActivityRunner:
 
     def run_travel(self):
         state = self.travel_status()
+        if state.get("buddy_id") == 0:
+            self.result["travel"]["state"] = "unowned"
+            self.result["notices"].append("尚未领取 Buddy，旅行已跳过")
+            return
         if state["state"] == "arrived":
             record_id = state.get("record_id")
             if not isinstance(record_id, (str, int)) or isinstance(record_id, bool) or not str(record_id):
