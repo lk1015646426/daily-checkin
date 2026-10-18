@@ -146,6 +146,33 @@ python main.py
 
 ## 配置说明
 
+### WorkBuddy 积分活动（第一版）
+
+桌面「切换应用 → WorkBuddy → 积分活动与成长中心」可开启并同步：
+
+- 活动补偿：先查是否可领，再领取并回读确认；已经领过或活动未开放时正常跳过。
+- 成长任务：接取当前开放的任务，补领服务端已判定完成的奖励。接取不代表完成，不自动生成对话、技能或小程序使用记录。
+- Buddy 旅行：领取返回的礼物，确认领取成功后按当天剩余名额派出。没有 Buddy 或状态未知时报告原因。
+- 到期提醒：查询任务截止时间与可用积分包到期时间，默认提前 7 天提醒。
+
+仅已开启自动签到的账号参与。首次使用需在桌面开启活动总开关，点击「保存并同步云端」。未提供活动配置时保持关闭，旧版多账号 Secret 仍可使用。配置以 `WORKBUDDY_ACCOUNTS_JSON` 的可选顶层 `activities` 字段保存，不添加 refresh token 或完整认证文件。
+
+```json
+{"enabled":true,"compensation":true,"tasks":true,"travel":true,"expiryDays":7}
+```
+
+每天北京时间 04:00 随全部站点签到执行；00:00、08:00、12:00、16:00、20:00 仅检查 WorkBuddy 活动。可手动运行工作流并勾选 `activities_only`，还可沿用 `account_filter` 指定一个账号。定时任务可能因 GitHub 调度延迟。
+
+写操作不自动重试，成功必须有服务端状态回读。未确认的操作会报告异常，不继续执行依赖它的下一步。每个账号有时间预算，各账号分别汇报；活动报告保存在 `store/workbuddy_activities.json`，随原有缓存保存，不包含凭证。轮询无新进展时不推送，相同异常和到期提醒当天去重；每日签到仍推送完整结果。
+
+凭证继续由桌面端统一续期、同步至云端。抽奖、能量盲盒、补登卡消耗、模拟使用行为、短信登录和公众号关注不在这一版范围内。
+
+接口契约参考：
+[88lin/workbuddy-auto-signin](https://github.com/88lin/workbuddy-auto-signin)、
+[ithtelab/workbuddy-manager](https://github.com/ithtelab/workbuddy-manager)、
+[L0NE-6/WorkBuddy-Daily](https://github.com/L0NE-6/WorkBuddy-Daily)。
+本项目活动模块独立实现，是否开放、奖励数额及完成条件以账号实际接口返回为准。
+
 `config.yaml` 保存站点结构和环境变量名称，不保存账号密码或 token：
 
 - `sites.<site>.enabled`：是否启用站点

@@ -25,6 +25,15 @@ def workbuddy_config():
 
 
 class WorkBuddyAccountConfigTests(unittest.TestCase):
+    def test_activity_config_keeps_existing_account_auth_schema(self):
+        with patch.dict(os.environ, {"WORKBUDDY_ACCOUNTS_JSON": (
+            '{"version":1,"accounts":[{"key":"wb-7f3a8c91d2e4","name":"个人号",'
+            '"access_token":"aggregate-token"}],"activities":{"enabled":true}}'
+        )}, clear=True):
+            site = Config(workbuddy_config(), Mock()).sites()[0]
+        self.assertEqual("aggregate-token", site.accounts[0].token)
+        self.assertEqual("wb-7f3a8c91d2e4", site.accounts[0].stable_key)
+
     def test_workflow_maps_aggregate_secret(self):
         workflow = (
             Path(__file__).resolve().parents[1] / ".github" / "workflows" / "daily-checkin.yml"

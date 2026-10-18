@@ -17,6 +17,7 @@ from common.store import TokenStore
 from signers.acy7 import Acy7Signer
 from signers.workbuddy import WorkBuddySigner
 from signers.trae import TraeSigner
+from signers.workbuddy_activities import ActivityRunner, parse_policy, save_activity_report
 
 SIGNERS = {
     "acy7": Acy7Signer,
@@ -74,7 +75,15 @@ def main():
 
     results = []
     matched_accounts = 0
+    activities_only = os.environ.get("CHECKIN_ACTIVITIES_ONLY", "").lower() == "true"
+    try:
+        activity_policy = parse_policy()
+    except ValueError as exc:
+        logger.error(f"WorkBuddy 活动配置无效: {exc}")
+        sys.exit(1)
     for site in cfg.sites():
+        if activities_only and site.key != "workbuddy":
+            continue
         signer_cls = SIGNERS.get(site.type)
         if not signer_cls:
             logger.warning(f"未知站点类型: {site.type}，已跳过")
@@ -87,7 +96,19 @@ def main():
             matched_accounts += 1
             try:
                 signer = signer_cls(site, account, session, store, logger, notifier)
-                res = signer.run()
+                if activities_only:
+                    res = {"site": site.key, "account": account.name, "ok": True,
+                           "msg": "活动轮询", "points": None}
+                else:
+                    res = signer.run()
+                if site.key == "workbuddy" and res["ok"] and activity_policy["enabled"]:
+                    token = signer.login()["token"]
+                    activity = ActivityRunner(token, activity_policy).run()
+                    res["activities"] = activity
+                    res["activity_summary"] = activity["summary"]
+                    if activities_only:
+                        res["ok"] = activity["ok"]
+                        res["msg"] = "活动检查完成" if activity["ok"] else "部分活动未完成，请查看明细"
             except Exception as e:
                 logger.exception(f"{site.key}/{account.name} 执行异常")
                 res = {
@@ -110,10 +131,16 @@ def main():
         sys.exit(1)
 
     summary = Notifier.format_summary(results)
+    if activities_only:
+        summary = summary.replace("📅 *每日签到*", "🎁 *WorkBuddy 活动检查*", 1)
     logger.info("\n" + summary)
-    notifier.send(summary)
+    should_notify = save_activity_report(results, "store/workbuddy_activities.json")
+    if not activities_only or should_notify:
+        notifier.send(summary)
+    else:
+        logger.info("活动没有新领取、新接取或新异常，跳过重复通知")
 
-    failed = [r for r in results if not r["ok"]]
+    failed = [r for r in results if not r["ok"] or not r.get("activities", {}).get("ok", True)]
     sys.exit(1 if failed else 0)
 
 

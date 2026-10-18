@@ -4,12 +4,18 @@ on:
   schedule:
     # 每天 20:00 UTC = 次日北京时间 04:00
     - cron: "0 20 * * *"
+    # 活动轮询：北京时间 00、08、12、16、20 点；04 点随每日签到执行。
+    - cron: "0 0,4,8,12,16 * * *"
   workflow_dispatch:
     inputs:
       account_filter:
         description: "可选，格式为站点:账号名或稳定 ID，例如 trae:1780293、workbuddy:wb-7f3a8c91d2e4"
         required: false
         default: ""
+      activities_only:
+        description: "仅检查 WorkBuddy 活动，不运行各站点每日签到"
+        type: boolean
+        default: false
 
 concurrency:
   group: daily-checkin
@@ -21,7 +27,7 @@ permissions:
 jobs:
   checkin:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,6 +57,7 @@ jobs:
       - name: Run checkin
         env:
           CHECKIN_ACCOUNT_FILTER: ${{ github.event.inputs.account_filter || '' }}
+          CHECKIN_ACTIVITIES_ONLY: ${{ (github.event_name == 'schedule' && github.event.schedule != '0 20 * * *') || inputs.activities_only || false }}
           ACY7_USER: ${{ secrets.ACY7_USER }}
           ACY7_PASS: ${{ secrets.ACY7_PASS }}
           WB1_TOKEN: ${{ secrets.WB1_TOKEN }}

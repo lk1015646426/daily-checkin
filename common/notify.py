@@ -60,6 +60,8 @@ class Notifier:
 
             if not r.get("ok"):
                 lines.append(f"{status} {name}：{r.get('msg', '失败')}")
+                if r.get("activity_summary"):
+                    lines.append(r["activity_summary"])
                 continue
 
             unit = r.get("points_unit", "")
@@ -94,6 +96,8 @@ class Notifier:
                 lines.append(f"{status} {name}：" + " | ".join(parts))
             else:
                 lines.append(f"{status} {name}：{r.get('msg', '')}")
+            if r.get("activity_summary"):
+                lines.append(r["activity_summary"])
 
         # Server酱/Markdown 渲染需要双换行才能分段显示
         return "\n\n".join(lines)
