@@ -127,12 +127,29 @@ class ActivityTests(unittest.TestCase):
         self.assertFalse(any(call[0] == "POST" for call in http.calls))
 
     def test_unowned_buddy_never_attempts_depart(self):
-        http = FakeHTTP([{"state": "idle", "buddy_id": 0}])
+        http = FakeHTTP([{"state": "idle", "buddy_id": 0}, {"buddy": None}])
         runner = ActivityRunner("secret", policy(), http)
         runner.run_travel()
-        self.assertEqual(1, len(http.calls))
+        self.assertEqual(2, len(http.calls))
         self.assertEqual("unowned", runner.result["travel"]["state"])
         self.assertEqual([], runner.result["errors"])
+
+    def test_idle_zero_buddy_id_does_not_hide_owned_buddy(self):
+        http = FakeHTTP([{"state": "idle", "buddy_id": 0},
+                         {"buddy": {"instance_id": "owned"}},
+                         {"locations": [{"id": "city", "name": "咖啡馆"}]},
+                         {}, {"state": "traveling", "buddy_id": 123}])
+        runner = ActivityRunner("secret", policy(), http)
+        runner.run_travel()
+        self.assertEqual(1, runner.result["departed"])
+        self.assertEqual("traveling", runner.result["travel"]["state"])
+
+    def test_unknown_buddy_info_never_sends_depart(self):
+        http = FakeHTTP([{"state": "idle", "buddy_id": 0}, {}])
+        runner = ActivityRunner("secret", policy(), http)
+        with self.assertRaises(Exception):
+            runner.run_travel()
+        self.assertFalse(any(call[0] == "POST" for call in http.calls))
 
     def test_compensation_already_claimed_never_writes_claim(self):
         http = FakeHTTP([{"active": True, "claimed": True, "credit_num": 500}])

@@ -13,17 +13,19 @@ class Notifier:
     def send(self, text):
         try:
             if self.channel == "telegram":
-                self._tg(text)
+                return self._tg(text)
             elif self.channel == "serverchan":
-                self._sc(text)
+                return self._sc(text)
             else:
                 self.logger.info("通知渠道为 none，跳过推送")
+                return True
         except Exception as e:
             # 注意：异常消息会包含完整请求 URL（TG bot token / Server酱 key 在 URL 中），
             # 不能直接记录 {e}，否则密钥会写入日志。只记录异常类型。
             self.logger.warning(
                 f"通知发送失败 ({self.channel}): {type(e).__name__}"
             )
+            return False
 
     def _tg(self, text):
         tg = self.cfg.get("telegram", {})
@@ -31,19 +33,28 @@ class Notifier:
         chat = os.environ.get(tg.get("chat_id_env", "TG_CHAT_ID"))
         if not token or not chat:
             self.logger.warning("Telegram 凭证缺失，跳过推送")
-            return
+            return False
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        requests.post(
-            url, json={"chat_id": chat, "text": text, "parse_mode": "Markdown"}, timeout=15
-        )
+        # 纯文本避免账号备注中的 Markdown 字符导致整份汇总被拒绝。
+        plain = text.replace("**", "").replace("*每日签到*", "每日签到")
+        response = requests.post(url, json={"chat_id": chat, "text": plain}, timeout=15)
+        if response.status_code != 200 or response.json().get("ok") is not True:
+            raise RuntimeError("通知平台未确认接收")
+        self.logger.info("Telegram 已确认接收每日汇总")
+        return True
 
     def _sc(self, text):
         key = os.environ.get(self.cfg.get("serverchan", {}).get("key_env", "SERVERCHAN_KEY"))
         if not key:
             self.logger.warning("Server酱 key 缺失，跳过推送")
-            return
+            return False
         url = f"https://sctapi.ftqq.com/{key}.send"
-        requests.post(url, data={"title": "每日签到结果", "desp": text}, timeout=15)
+        response = requests.post(url, data={"title": "每日签到结果", "desp": text}, timeout=15)
+        body = response.json()
+        if response.status_code != 200 or type(body.get("code")) is not int or body["code"] != 0:
+            raise RuntimeError("通知平台未确认接收")
+        self.logger.info("Server酱已确认接收每日汇总")
+        return True
 
     @staticmethod
     def format_summary(results):

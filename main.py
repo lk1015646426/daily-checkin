@@ -8,6 +8,7 @@ import sys
 from dotenv import load_dotenv
 
 from common.config import Account, Config
+from common.daily_summary import DailySummary
 
 load_dotenv()  # 读取项目根目录 .env（账号、token 与通知凭证）
 from common.logger import setup_logger
@@ -17,7 +18,7 @@ from common.store import TokenStore
 from signers.acy7 import Acy7Signer
 from signers.workbuddy import WorkBuddySigner
 from signers.trae import TraeSigner
-from signers.workbuddy_activities import ActivityRunner, parse_policy, save_activity_report
+from signers.workbuddy_activities import ActivityRunner, parse_policy, save_activity_report, format_activity
 
 SIGNERS = {
     "acy7": Acy7Signer,
@@ -137,6 +138,7 @@ def main():
                 f"{res['site']}/{res['account']}: {'成功' if res['ok'] else '失败'} - "
                 f"{res['msg']}{_diagnostic_suffix(res)}"
             )
+            res["account_key"] = account.stable_key or account.name
             results.append(res)
 
     if account_filter and matched_accounts == 0:
@@ -148,14 +150,23 @@ def main():
     if activities_only:
         summary = summary.replace("📅 *每日签到*", "🎁 *WorkBuddy 活动检查*", 1)
     logger.info("\n" + summary)
-    should_notify = save_activity_report(results, "store/workbuddy_activities.json")
-    if not activities_only or should_notify:
-        notifier.send(summary)
+    save_activity_report(results, "store/workbuddy_activities.json")
+    daily = DailySummary()
+    daily_results = daily.record(results)
+    notification_failed = False
+    if daily.should_send(activities_only, account_filter):
+        for result in daily_results:
+            if result.get("activities"):
+                result["activity_summary"] = format_activity(result["activities"])
+        if notifier.send(Notifier.format_summary(daily_results)):
+            daily.mark_sent()
+        else:
+            notification_failed = True
     else:
-        logger.info("活动没有新领取、新接取或新异常，跳过重复通知")
+        logger.info("每日一次完整汇总：活动轮询、单账号验证或当日已推送，本轮静默保存结果")
 
     failed = [r for r in results if not r["ok"] or not r.get("activities", {}).get("ok", True)]
-    sys.exit(1 if failed else 0)
+    sys.exit(1 if failed or notification_failed else 0)
 
 
 if __name__ == "__main__":

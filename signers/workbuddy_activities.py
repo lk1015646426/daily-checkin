@@ -225,9 +225,16 @@ class ActivityRunner:
     def run_travel(self):
         state = self.travel_status()
         if state.get("buddy_id") == 0:
-            self.result["travel"]["state"] = "unowned"
-            self.result["notices"].append("尚未领取 Buddy，旅行已跳过")
-            return
+            # 空闲时这里表示当前旅行没有绑定 Buddy，不表示账号未拥有 Buddy。
+            info = self.request("GET", GROWTH + "/buddy/info")
+            if "buddy" not in info or (info["buddy"] is not None and not isinstance(info["buddy"], dict)):
+                raise ActivityError("Buddy 拥有状态无法确认，未自动派出")
+            if info["buddy"] is None:
+                self.result["travel"]["state"] = "unowned"
+                self.result["notices"].append("尚未领取 Buddy，旅行已跳过")
+                return
+            if not info["buddy"]:
+                raise ActivityError("Buddy 信息不完整，未自动派出")
         if state["state"] == "arrived":
             record_id = state.get("record_id")
             if not isinstance(record_id, (str, int)) or isinstance(record_id, bool) or not str(record_id):
